@@ -1,8 +1,8 @@
 """CP7 Stage C: build_plasmid circular 전 구간 E2E."""
 import sys, io, contextlib, shutil, json
 from pathlib import Path
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/tools_dev")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "tools_dev"))
 from utils.io import DatabaseImport
 from workflow.builder import WorkflowBuilder
 from params import DesignParams

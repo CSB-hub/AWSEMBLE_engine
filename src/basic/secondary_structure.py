@@ -144,12 +144,12 @@ def get_pcr_degradation_region(
         True
     """
     if not template:
-        raise ValueError("Template 서열이 비어있습니다")
+        raise ValueError("The template sequence is empty")
 
     if primer_length + extended_length > len(template):
         raise ValueError(
-            f"Template 길이({len(template)} bp)가 "
-            f"primer_length + extended_length({primer_length + extended_length} bp)보다 작습니다"
+            f"The template length ({len(template)} bp) is smaller than "
+            f"primer_length + extended_length ({primer_length + extended_length} bp)"
         )
 
     # Forward 영역: 5' 끝에서 primer_length + extended_length
@@ -205,7 +205,7 @@ def analyze_single_strand_structure(
         True
     """
     if not sequence:
-        raise ValueError("서열이 비어있습니다")
+        raise ValueError("The sequence is empty")
 
     sequence = sequence.upper()
 
@@ -368,9 +368,9 @@ def analyze_long_duplex(
         'delta_g': delta_g,
         'tm': 0.0,                   # cofold MFE는 Tm을 주지 않는다
         'warning': (
-            f"dimer 참고값(ViennaRNA cofold, {len(a)}/{len(b)}nt): "
-            f"ΔG {delta_g:.2f} kcal/mol — primer3 계산 상한을 넘는 길이라 "
-            f"**스케일이 달라 기존 컷오프와 비교하면 안 됩니다(경고 전용)**."
+            f"Dimer reference value (ViennaRNA cofold, {len(a)}/{len(b)}nt): "
+            f"dG {delta_g:.2f} kcal/mol - this length is past the primer3 limit, so the "
+            f"**scale differs and it must not be compared with the usual cutoffs (warning-only)**."
         ),
         'engine': 'viennarna',
         'warn_only': True,
@@ -420,8 +420,8 @@ def _analyze_long_strand(
             'has_strong_structure': False,
             'engine': 'none',
             'warn_only': True,
-            'note': (f"{len(clean_sequence)}bp는 primer3 계산 상한을 넘고 ViennaRNA도 "
-                     f"없어 2차구조를 계산하지 못했습니다."),
+            'note': (f"{len(clean_sequence)}bp is past the primer3 limit and ViennaRNA is not "
+                     f"available, so no secondary structure was computed."),
         }
 
     RNA, md = vienna
@@ -452,11 +452,11 @@ def _analyze_long_strand(
         'has_strong_structure': False,
         'engine': 'viennarna',
         'warn_only': True,
-        'note': (f"{len(clean_sequence)}bp — primer3 계산 상한({THERMO_MAX_LEN}bp)을 "
-                 f"넘어 ViennaRNA(DNA 파라미터)로 계산했습니다. MFE ΔG {delta_g:.2f} kcal/mol, "
-                 f"페어 염기 {paired}개"
-                 f"{', 3′말단 관여' if involves_3prime else ''}. "
-                 f"**스케일이 달라 기존 ΔG 컷오프와 직접 비교하면 안 됩니다 — 경고 전용입니다.**"),
+        'note': (f"{len(clean_sequence)}bp - past the primer3 limit ({THERMO_MAX_LEN}bp), so this was "
+                 f"computed with ViennaRNA (DNA parameters). MFE dG {delta_g:.2f} kcal/mol, "
+                 f"{paired} paired bases"
+                 f"{', involves the 3-prime end' if involves_3prime else ''}. "
+                 f"**The scale differs, so do not compare it with the usual dG cutoffs - warning-only.**"),
     }
 
 
@@ -579,9 +579,10 @@ def analyze_target_accessibility(
         severity, tier = 'ok', ''
     accessible = severity == 'ok'
     warning = '' if accessible else (
-        f"template 결합부위 접근성 낮음({tier}, 평균 미페어확률 {mean_unpaired:.2f} @ {temp}°C) — "
-        f"자리가 접혀 프라이머 접근 저해 가능. template 고정이라 재설계 불가: "
-        f"첨가제(DMSO/betaine)·어닐링 온도 조정 권장"
+        f"Low accessibility at the template binding site ({tier}, mean unpaired probability "
+        f"{mean_unpaired:.2f} @ {temp}C) - the site is folded and may block primer access. "
+        f"The template is fixed so it cannot be redesigned: consider additives "
+        f"(DMSO/betaine) or adjusting the annealing temperature"
     )
     return {
         'mean_unpaired': mean_unpaired,
@@ -649,11 +650,11 @@ def analyze_pcr_structure(
         True
     """
     if not template:
-        raise ValueError("Template 서열이 비어있습니다")
+        raise ValueError("The template sequence is empty")
     if not forward_primer:
-        raise ValueError("Forward 프라이머가 비어있습니다")
+        raise ValueError("The forward primer is empty")
     if not reverse_primer:
-        raise ValueError("Reverse 프라이머가 비어있습니다")
+        raise ValueError("The reverse primer is empty")
 
     warnings = []
 
@@ -691,22 +692,22 @@ def analyze_pcr_structure(
     # 경고 메시지 생성
     if fwd_binding_analysis['has_strong_structure']:
         warnings.append(
-            f"Forward 결합 영역에 강한 2차 구조 존재 (ΔG = {fwd_binding_analysis['delta_g']:.2f} kcal/mol)"
+            f"Strong secondary structure in the forward binding region (dG = {fwd_binding_analysis['delta_g']:.2f} kcal/mol)"
         )
 
     if rev_binding_analysis['has_strong_structure']:
         warnings.append(
-            f"Reverse 결합 영역에 강한 2차 구조 존재 (ΔG = {rev_binding_analysis['delta_g']:.2f} kcal/mol)"
+            f"Strong secondary structure in the reverse binding region (dG = {rev_binding_analysis['delta_g']:.2f} kcal/mol)"
         )
 
     if fwd_primer_analysis['has_strong_structure']:
         warnings.append(
-            f"Forward 프라이머에 강한 hairpin 존재 (ΔG = {fwd_primer_analysis['delta_g']:.2f} kcal/mol)"
+            f"Strong hairpin in the forward primer (dG = {fwd_primer_analysis['delta_g']:.2f} kcal/mol)"
         )
 
     if rev_primer_analysis['has_strong_structure']:
         warnings.append(
-            f"Reverse 프라이머에 강한 hairpin 존재 (ΔG = {rev_primer_analysis['delta_g']:.2f} kcal/mol)"
+            f"Strong hairpin in the reverse primer (dG = {rev_primer_analysis['delta_g']:.2f} kcal/mol)"
         )
 
     # 강한 구조 존재 여부

@@ -530,7 +530,7 @@ class WorkflowBase:
             "",
             "| Item | Value |",
             "|---|---|",
-            "| 방식 | Nearest-Neighbor (SantaLucia 1998 / Biopython `Tm_NN`, `DNA_NN3`) |",
+            "| Method | Nearest-Neighbor (SantaLucia 1998 / Biopython `Tm_NN`, `DNA_NN3`) |",
         ]
         if prm is not None:
             lines += [

@@ -74,8 +74,15 @@ from workflow.builder import WorkflowBuilder
 
 S = Path("/tmp/claude-1000/-home-csb-Desktop-BioCAD/"
          "2f76d81c-815a-4c70-bfd6-00e46c3dcbd8/scratchpad")
-SANDBOX = (ROOT.parents[2] / "galaxy_dev" / "BioCAD_galaxy" / "tools" / "awsemble"
-           / "user_parts_sandbox_2.db")
+# 픽스처는 이 저장소 밖(Galaxy 트리)에 있다. 재구성 전에는 형제 디렉토리였지만
+# 지금은 깊이가 달라 맞지 않는다 — 알려진 자리를 순서대로 찾는다.
+_SB_NAME = "user_parts_sandbox_2.db"
+SANDBOX = next(
+    (p for p in (
+        ROOT.parents[2] / "galaxy_dev" / "BioCAD_galaxy" / "tools" / "awsemble" / _SB_NAME,
+        Path("/home/csb/Desktop/BioCAD/Awsemble/galaxy_dev/BioCAD_galaxy/tools/awsemble") / _SB_NAME,
+    ) if p.exists()),
+    ROOT.parents[2] / "galaxy_dev" / "BioCAD_galaxy" / "tools" / "awsemble" / _SB_NAME)
 FAIL = []
 
 # mCherry rev의 실제 anneal 구간 — GC 28.0%, 설계창 [20,80] 안쪽이다.

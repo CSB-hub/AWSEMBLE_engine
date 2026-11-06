@@ -64,12 +64,12 @@ lin = VectorHomologySpacer(params=DesignParams()).linearize(vector)
 ok(module_carries_homology(mod_v, lin, DesignParams().gibson_overlap),
    "module 양 끝 = 벡터 선형화 자리 서열",
    f"{str(mod_v.seq)[:12]}… / …{str(mod_v.seq)[-12:]}")
-ok("삽입 PCR 생략" in log_v, "삽입 PCR이 생략됨")
+ok("skipping the insertion PCR" in log_v, "삽입 PCR이 생략됨")
 
 vp = work_csv = base / "vh/proj/reports/vector_primers.csv"
 if vp.exists():
     body = vp.read_text(encoding="utf-8")
-    ok("삽입 프라이머 불필요" in body, "리포트가 '프라이머 없음'을 명시")
+    ok("No insertion primers needed" in body, "리포트가 '프라이머 없음'을 명시")
 else:
     ok(False, "vector_primers.csv 생성")
 

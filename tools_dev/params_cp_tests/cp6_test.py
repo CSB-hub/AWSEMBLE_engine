@@ -1,7 +1,7 @@
 """CP6: 파라미터가 다르면 artifact id가 갈리고 서로 덮어쓰지 않는가."""
 import sys, shutil, json, io, contextlib
 from pathlib import Path
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
 from utils.io import DatabaseImport
 from workflow.builder import WorkflowBuilder
 from params import DesignParams

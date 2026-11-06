@@ -125,29 +125,30 @@ def check_yeast_vector(vector: Dseqrecord) -> Dict:
 
     evidence = []
     if ori:
-        evidence.append(f"복제원점 후보: {', '.join(ori)}")
+        evidence.append(f"origin candidates: {', '.join(ori)}")
     if marker:
-        evidence.append(f"선택마커 후보: {', '.join(marker)}")
+        evidence.append(f"selection marker candidates: {', '.join(marker)}")
     if hints:
-        evidence.append(f"이름·설명 단서: {', '.join(hints)}")
+        evidence.append(f"name/description hints: {', '.join(hints)}")
 
     if ori and marker:
         verdict, warning = "ok", ""
     elif ori or marker or hints:
-        missing = "선택마커" if ori else ("복제원점" if marker else "복제원점과 선택마커")
+        missing = "a selection marker" if ori else ("an origin of replication" if marker else "an origin of replication and a selection marker")
         verdict = "partial"
         warning = (
-            f"⚠️ 벡터 '{vector.name}'에서 효모 {missing}를 확인하지 못했습니다 "
-            f"({'; '.join(evidence)}). yeast HR 산물은 효모에서 복제·선별되어야 회수할 수 "
-            f"있습니다 — 이 벡터가 효모 셔틀 벡터인지 확인하세요."
+            f"Could not confirm {missing} for yeast in vector '{vector.name}' "
+            f"({'; '.join(evidence)}). A yeast HR product can only be recovered if it "
+            f"replicates and is selected in yeast - check that this is a yeast shuttle vector."
         )
     else:
         verdict = "unknown"
         warning = (
-            f"⚠️ 벡터 '{vector.name}'에 feature·설명이 없어 효모 복제원점(ARS/CEN 또는 2μ)과 "
-            f"선택마커를 **확인할 수 없습니다**(없다는 뜻은 아닙니다). yeast HR 산물은 효모에서 "
-            f"복제·선별되어야 회수됩니다 — 셔틀 벡터인지 직접 확인하거나, feature가 있는 "
-            f"GenBank 파일로 등록하면 자동 판정됩니다."
+            f"Vector '{vector.name}' has no features or description, so a yeast origin "
+            f"(ARS/CEN or 2-micron) and a selection marker **cannot be confirmed** (this does "
+            f"not mean they are absent). A yeast HR product is only recovered if it replicates "
+            f"and is selected in yeast - check that it is a shuttle vector yourself, or "
+            f"register it as a GenBank file with features so this can be judged automatically."
         )
 
     return {
@@ -182,8 +183,8 @@ class YeastHRCloning(GibsonCloning):
 
     #: 산출물·리포트에 유지해야 하는 in vivo 전제.
     IN_VIVO_NOTE = (
-        "yeast HR은 형질전환 자체가 조립 단계입니다 — 이 결과는 **기대 산물**이며, "
-        "실제로는 효모에서 플라스미드를 회수해 확인해야 합니다."
+        "In yeast HR the transformation itself is the assembly step - this result is the "
+        "**expected product**, and in practice you must recover the plasmid from yeast and verify it."
     )
 
     def _check_plan(self, plan) -> None:
@@ -203,17 +204,19 @@ class YeastHRCloning(GibsonCloning):
         from workflow.junction_plan import JUNCTION_UNIQUE_MAX_BP
 
         detail = "\n".join(
-            f"    · {a} ↔ {b}: {n}bp 공유 ({orient})"
+            f"    - {a} <-> {b}: {n}bp shared ({orient})"
             for a, b, n, orient in plan.crosstalk_pairs[:6]
         )
         raise RuntimeError(
-            f"yeast HR 설계 중단 — 인접하지 않은 fragment가 서열을 공유합니다"
-            f"(임계 {JUNCTION_UNIQUE_MAX_BP}bp, 최대 {plan.max_crosstalk}bp):\n{detail}\n"
-            f"  효모 세포 안에서는 의도한 접합부 말고 **이 자리끼리도** 재조합할 수 있고, "
-            f"형질전환이 곧 조립이라 잘못된 산물이 실험 뒤에야 드러납니다.\n"
-            f"  → 같은 부품을 두 자리에 쓰고 있다면 **하나를 다른 부품으로 바꾸세요.** "
-            f"접합부에 중립 서열을 끼우는 길은 없습니다 — RBS·CDS 경계처럼 간격이 기능을 "
-            f"정하는 자리에 삽입되면 조립은 성공해도 발현이 죽기 때문입니다."
+            f"yeast HR design stopped - non-adjacent fragments share sequence "
+            f"(threshold {JUNCTION_UNIQUE_MAX_BP}bp, max {plan.max_crosstalk}bp):\n{detail}\n"
+            f"  Inside the yeast cell these positions can recombine with **each other** as "
+            f"well as at the intended junctions, and since the transformation is the assembly, "
+            f"a wrong product only shows up after the experiment.\n"
+            f"  -> If the same part is used in two places, **replace one with a different "
+            f"part.** Inserting neutral sequence at the junction is not an option - at "
+            f"positions like an RBS/CDS boundary the spacing sets the function, so the "
+            f"assembly would succeed while expression dies."
         )
 
     def assemble(self, fragments: List[Dseqrecord],

@@ -1,8 +1,8 @@
 """CP7 Stage B: circular module에서 module을 꺼내는가 (digest / PCR 폴백)."""
 import sys, io, contextlib, shutil
 from pathlib import Path
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/tools_dev")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "tools_dev"))
 from pydna.dseqrecord import Dseqrecord
 from Bio import Restriction
 from assembly.golden_gate import GoldenGateModule
@@ -78,7 +78,7 @@ chk("자를 효소 없음을 감지", enz2 is None, why2[:60])
 with contextlib.redirect_stdout(io.StringIO()) as buf2:
     out2=wf.module_excision([fake, vec], design_params=DesignParams())
 chk("PCR로 폴백해 산출", out2 is not None, f"{len(out2['record'].seq)}bp" if out2 else "")
-chk("폴백 경고 출력", "PCR 방식으로 전환" in buf2.getvalue())
+chk("폴백 경고 출력", "switching to the PCR method" in buf2.getvalue())
 
 print("\n=== CP7 Stage B:", "통과" if ok else "실패", "===")
 sys.exit(0 if ok else 1)

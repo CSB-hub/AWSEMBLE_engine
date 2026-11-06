@@ -98,7 +98,7 @@ for s in long_cases:
           f"{len(s)}bp has_strong_structure=False")
     check(r["severity"] == "ok", f"{len(s)}bp severity='ok'")
     check(r["warn_only"] is True, f"{len(s)}bp warn_only=True")
-    check("경고 전용" in r.get("note", ""), f"{len(s)}bp note에 경고 전용 명시")
+    check("warning-only" in r.get("note", ""), f"{len(s)}bp note에 경고 전용 명시")
 
 print("\n[4] 키 스키마 호환")
 keys_short = set(analyze_single_strand_structure(short_cases[0]))
@@ -146,7 +146,7 @@ check(d_strong.get("engine") == "viennarna", ">60bp dimer가 ViennaRNA로 계산
 check(d_strong["delta_g"] < d_weak["delta_g"] - 10,
       "상보 쌍이 비상보보다 훨씬 안정하게 계산됨")
 check(d_strong["has_dimer"] is False, ">60bp dimer는 게이트를 움직이지 않음")
-check("경고 전용" in d_strong.get("warning", ""), "경고 문구에 전용 표시")
+check("warning-only" in d_strong.get("warning", ""), "경고 문구에 전용 표시")
 # ≤60bp는 primer3 경로 그대로
 d_short = _VP.check_primer_dimer(seeded(25, 1), seeded(25, 2))
 check("engine" not in d_short or d_short.get("engine") != "viennarna",

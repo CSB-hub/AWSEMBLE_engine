@@ -315,21 +315,21 @@ class JunctionPlanner:
 
         if len(parts) < 2:
             raise ValueError(
-                f"접합부 설계에는 부품이 2개 이상 필요합니다(받은 개수: {len(parts)})."
+                f"Junction design needs at least two parts (got {len(parts)})."
             )
 
         amin = int(arm_min if arm_min is not None else self.params.gibson_overlap)
         amax = int(arm_max if arm_max is not None else amin)
         if amin < 1 or amax < amin:
-            raise ValueError(f"접합부 길이 범위가 잘못됐습니다: {amin}~{amax}")
+            raise ValueError(f"Invalid junction length range: {amin}-{amax}")
 
         items: List[Tuple[str, str, str]] = []
         for p in parts:
             seq = str(p.seq).upper()
             if not validate_dna_sequence(seq):
                 raise ValueError(
-                    f"부품 '{p.name}'에 ATGC 외 염기(N/IUPAC) 또는 빈 서열이 있습니다 "
-                    f"→ 접합부 설계 불가."
+                    f"Part '{p.name}' contains non-ATGC bases (N/IUPAC) or an empty sequence "
+                    f"-> junction design is not possible."
                 )
             pid = p.annotations.get("part_id") or p.name
             items.append((str(pid), p.annotations.get("part_type", ""), seq))
@@ -417,11 +417,11 @@ class JunctionPlanner:
         if not any(k == "lp" for k, _ in runs):
             total = sum(len(i[2]) for _k, g in runs for i in g)
             raise ValueError(
-                f"부품이 전부 접합부 길이({amin}bp)보다 짧습니다(합계 {total}bp) — "
-                f"이을 접합부가 없습니다. "
-                + (f"전체를 올리고 한 쌍으로 통째 주문하면 조립이 필요 없습니다."
+                f"Every part is shorter than the junction length ({amin}bp) (total {total}bp) - "
+                f"there is no junction to build. "
+                + (f"Ordering the whole thing as a single oligo pair removes the need to assemble."
                    if total <= OLIGO_SYNTH_MAX_BP else
-                   f"접합부 길이를 줄이거나 더 긴 부품을 섞으세요.")
+                   f"Shorten the junction length or mix in longer parts.")
             )
 
         frags: List[FragmentSpec] = []
@@ -460,11 +460,11 @@ class JunctionPlanner:
                 frag.part_lens = [len(g[2]) for g in pending_sp] + frag.part_lens
                 frag.name = "+".join(frag.part_ids)
                 frag.notes.append(
-                    f"짧은 부품 {', '.join(g[0] for g in pending_sp)}({sp_len}bp)을 "
-                    f"forward 프라이머 tail로 실었습니다"
+                    f"Short part(s) {', '.join(g[0] for g in pending_sp)} ({sp_len}bp) were carried "
+                    f"on the forward primer tail"
                 )
                 warnings.append(
-                    f"tail 흡수: {', '.join(g[0] for g in pending_sp)} → {group[0][0]} 프라이머"
+                    f"tail absorption: {', '.join(g[0] for g in pending_sp)} -> {group[0][0]} primer"
                 )
                 pending_sp = None
             elif pending_sp:
@@ -487,11 +487,11 @@ class JunctionPlanner:
                 prev.part_lens = prev.part_lens + [len(g[2]) for g in pending_sp]
                 prev.name = "+".join(prev.part_ids)
                 prev.notes.append(
-                    f"짧은 부품 {', '.join(g[0] for g in pending_sp)}({sp_len}bp)을 "
-                    f"reverse 프라이머 tail로 실었습니다"
+                    f"Short part(s) {', '.join(g[0] for g in pending_sp)} ({sp_len}bp) were carried "
+                    f"on the reverse primer tail"
                 )
                 warnings.append(
-                    f"tail 흡수: {', '.join(g[0] for g in pending_sp)} → {prev.name} 프라이머"
+                    f"tail absorption: {', '.join(g[0] for g in pending_sp)} -> {prev.name} primer"
                 )
             else:
                 frags.append(self._sp_oligo(pending_sp, amax, warnings))
@@ -502,7 +502,7 @@ class JunctionPlanner:
         for f in frags:
             if f.production == "pcr" and should_use_oligo(len(f.body), self.params):
                 f.production = "oligo"
-                f.notes.append(f"{len(f.body)}bp — 올리고 합성이 더 싸고 확실합니다")
+                f.notes.append(f"{len(f.body)}bp - oligo synthesis is cheaper and more reliable")
 
         # fragment가 1개인 것은 **정상일 수 있다.** 양 끝 spacer가 벡터 homology면
         # module 자체가 단일 PCR 산물이고, 조립 상대는 선형화된 벡터다(= 조각 2개,
@@ -510,8 +510,8 @@ class JunctionPlanner:
         # 여기서 0개인 게 맞다. 부품이 전부 흡수돼 **아무 것도 안 남은** 경우만 막는다.
         if not frags:
             raise ValueError(
-                f"fragment가 하나도 남지 않았습니다. "
-                f"부품이 접합부 길이({amin}bp)에 비해 너무 짧은지 확인하세요."
+                f"No fragment is left. "
+                f"Check whether the parts are too short for the junction length ({amin}bp)."
             )
         return frags
 
@@ -524,19 +524,19 @@ class JunctionPlanner:
         total = 2 * amax + len(body)
         if total > OLIGO_SYNTH_MAX_BP:
             raise RuntimeError(
-                f"짧은 부품 {', '.join(ids)}({len(body)}bp)을 실을 자리가 없습니다 — "
-                f"프라이머 tail에는 너무 길고, 양쪽 arm을 단 올리고는 {total}nt로 "
-                f"합성 상한({OLIGO_SYNTH_MAX_BP}nt)을 넘습니다. "
-                f"접합부 길이를 줄이거나 이 부품을 더 긴 것과 합쳐 등록하세요."
+                f"There is nowhere to carry short part(s) {', '.join(ids)} ({len(body)}bp) - "
+                f"too long for a primer tail, and with arms on both sides the oligo would be "
+                f"{total}nt, above the synthesis limit ({OLIGO_SYNTH_MAX_BP}nt). "
+                f"Shorten the junction length, or merge this part with a longer one."
             )
         warnings.append(
-            f"독립 올리고: {', '.join(ids)}({len(body)}bp) — 양쪽 arm 포함 최대 {total}nt"
+            f"Standalone oligo: {', '.join(ids)} ({len(body)}bp) - up to {total}nt including both arms"
         )
         return FragmentSpec(
             name="+".join(ids), part_ids=ids, part_types=[g[1] for g in group],
             part_lens=[len(g[2]) for g in group],
             template="", prefix=body, production="oligo",
-            notes=[f"짧은 부품 {len(body)}bp — 양쪽 arm을 함께 합성합니다"],
+            notes=[f"Short part {len(body)}bp - both arms are synthesised with it"],
         )
 
     # ------------------------------------------------------------------ #
@@ -562,7 +562,7 @@ class JunctionPlanner:
             tried: List[str] = []
             for L in range(amin, amax + 1):
                 if len(source) < L:
-                    tried.append(f"{L}bp: 상대 fragment가 {len(source)}bp로 짧음")
+                    tried.append(f"{L}bp: the partner fragment is only {len(source)}bp")
                     continue
                 window = source[:L] if carrier == "left" else source[-L:]
                 ok, reason, gc, dg = self._eval_window(window)
@@ -573,18 +573,18 @@ class JunctionPlanner:
 
             if chosen is None:
                 raise RuntimeError(
-                    f"접합부 {i}({left.name} ↔ {right.name})에서 품질을 통과하는 길이를 "
-                    f"{amin}~{amax}bp 범위에서 찾지 못했습니다.\n"
-                    f"  시도: {'; '.join(tried[:6])}\n"
-                    f"  → 접합부 길이 범위를 넓히거나, 이 자리의 부품을 바꾸세요."
+                    f"At junction {i} ({left.name} <-> {right.name}) no length in {amin}-{amax}bp "
+                    f"passed quality.\n"
+                    f"  Tried: {'; '.join(tried[:6])}\n"
+                    f"  -> Widen the junction length range, or change the part at this position."
                 )
 
             L, window, gc, dg = chosen
             if dg is not None and dg <= JUNCTION_HAIRPIN_WARN_DG:
                 warnings.append(
-                    f"⚠️ 접합부 {i}({left.name}↔{right.name}) 구간에 2차구조가 있습니다 "
-                    f"(ΔG {dg:.1f}, {L}bp). 차단하지는 않습니다 — 조립이 더디면 "
-                    f"온도·첨가제 조건을 확인하세요."
+                    f"Junction {i} ({left.name}<->{right.name}) has secondary structure "
+                    f"(dG {dg:.1f}, {L}bp). This does not block - if assembly is slow, "
+                    f"check the temperature and additive conditions."
                 )
             if carrier == "left":
                 left.right_arm = window
@@ -630,7 +630,7 @@ class JunctionPlanner:
         gc, dg = self._window_metrics(window)
         if not (self.params.gc_min <= gc <= self.params.gc_max):
             return (False,
-                    f"GC {gc:.0f}%가 기준({self.params.gc_min:.0f}~{self.params.gc_max:.0f}%) 밖",
+                    f"GC {gc:.0f}% is outside the window ({self.params.gc_min:.0f}-{self.params.gc_max:.0f}%)",
                     gc, dg)
         return True, "", gc, dg
 
@@ -667,16 +667,16 @@ class JunctionPlanner:
             if f.production == "oligo":
                 if f.order_len > OLIGO_SYNTH_MAX_BP:
                     warnings.append(
-                        f"⚠️ {f.name} 올리고 주문 길이 {f.order_len}nt가 합성 상한"
-                        f"({OLIGO_SYNTH_MAX_BP}nt)을 넘습니다."
+                        f"{f.name}: the oligo order length {f.order_len}nt exceeds the synthesis limit"
+                        f" ({OLIGO_SYNTH_MAX_BP}nt)."
                     )
                 continue
             for side, tail in (("forward", f.left_tail), ("reverse", f.right_tail)):
                 total = len(tail) + self.params.primer_len_min
                 if total > PRIMER_ORDER_MAX_NT:
                     warnings.append(
-                        f"⚠️ {f.name}의 {side} 프라이머가 최소 {total}nt로 주문 상한"
-                        f"({PRIMER_ORDER_MAX_NT}nt)을 넘습니다 "
+                        f"{f.name}: the {side} primer is at least {total}nt, above the order limit"
+                        f" ({PRIMER_ORDER_MAX_NT}nt) "
                         f"(tail {len(tail)}nt)."
                     )
 
@@ -718,14 +718,14 @@ class JunctionPlanner:
                 if shared >= JUNCTION_UNIQUE_MAX_BP:
                     plan.crosstalk_pairs.append(
                         (frags[i].name, frags[j].name, shared,
-                         "역상보" if rev > fwd else "정방향"))
+                         "reverse-complement" if rev > fwd else "forward"))
         plan.max_crosstalk = worst
         plan.crosstalk_checked = checked
         for a, b, n, orient in plan.crosstalk_pairs:
             plan.warnings.append(
-                f"⚠️ 비인접 fragment {a} ↔ {b}가 {n}bp를 공유합니다 "
-                f"({orient}, 임계 {JUNCTION_UNIQUE_MAX_BP}bp) — 의도하지 않은 자리끼리 "
-                f"재조합할 수 있습니다. 같은 부품을 두 자리에 쓰고 있는지 확인하세요."
+                f"Non-adjacent fragments {a} <-> {b} share {n}bp "
+                f"({orient}, threshold {JUNCTION_UNIQUE_MAX_BP}bp) - unintended positions "
+                f"may recombine. Check whether the same part is used in two places."
             )
 
 

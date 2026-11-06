@@ -384,14 +384,14 @@ def annotate_module_parts_from_layout(module, records, log=None):
 
     layouts = [r.annotations.get("part_spans") for r in records]
     if not any(layouts):
-        say("  ⚠️  part feature 기입 생략: 배치 정보(part_spans)가 없습니다")
+        say("  Skipped writing part features: no layout information (part_spans)")
         return module
 
     # body 누적합이 module 좌표. 총합이 module 길이와 다르면 전제가 깨진 것이므로
     # **조용히 틀린 좌표를 쓰지 않고** 기입을 포기한다.
     total = sum(int(r.annotations.get("body_len") or 0) for r in records)
     if total != n:
-        say(f"  ⚠️  part feature 기입 생략: body 합계 {total}bp != module {n}bp")
+        say(f"  Skipped writing part features: body total {total}bp != module {n}bp")
         return module
 
     offset = 0

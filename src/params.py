@@ -726,7 +726,7 @@ class DesignParams:
         if self.gibson_overlap + self.primer_len_min > THERMO_MAX_LEN:
             warns.append(
                 f"gibson_overlap({self.gibson_overlap}) + primer_len_min({self.primer_len_min}) = "
-                f"{self.gibson_overlap + self.primer_len_min}bp가 primer3 계산 상한 "
+                f"{self.gibson_overlap + self.primer_len_min}bp "
                 f"exceeds {THERMO_MAX_LEN}bp - for this combination hairpin/dimer are judged "
                 f"**warning-only** (ViennaRNA). The blocking gate does not run."
             )

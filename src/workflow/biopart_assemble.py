@@ -119,7 +119,7 @@ class BiopartWorkflow(WorkflowBase):
             self.vector_file = self.project_dir / vector_file
             # 필수 파일 존재 확인
             if not self.vector_file.exists():
-                raise FileNotFoundError(f"벡터 파일을 찾을 수 없습니다: {self.vector_file}")
+                raise FileNotFoundError(f"Vector file not found: {self.vector_file}")
 
         # 디렉토리 구조 생성
         self._setup_directories()
@@ -189,7 +189,7 @@ class BiopartWorkflow(WorkflowBase):
                     fragments.append(best_frag)
 
             if len(fragments) != len(parts):
-                print(f"  ⚠️  Fragment 추출 실패. {len(parts)}개 중 {len(fragments)}개만 확보됨. 건너뜀.\n")
+                print(f"  Fragment extraction failed - only {len(fragments)} of {len(parts)} obtained. Skipping.\n")
                 return None
             target = fragments
             if assembly_type == "circular":
@@ -211,7 +211,7 @@ class BiopartWorkflow(WorkflowBase):
         #    그 결과 벡터맵에서 파츠를 눌러도 자리를 못 잡았다("not in the case you are
         #    viewing"). 조립은 건너뛰되 **후처리는 똑같이 태운다.**
         if len(target) == 1 and assembly_type == "linear":
-            print(f"  · fragment 1개({target[0].name}) — 이을 접합부가 없어 그대로 module로 씁니다")
+            print(f"  single fragment ({target[0].name}) - no junction to build, using it as the module")
             # 조립 경로의 `results[0]`는 **새 객체**다. 여기서 입력을 그대로 쓰면 아래
             # feature 기입이 prepared part 레코드를 직접 건드리게 되므로 사본을 쓴다.
             record = copy.deepcopy(target[0])
@@ -220,11 +220,11 @@ class BiopartWorkflow(WorkflowBase):
                 results = assembler.assemble(target, assembly_type=assembly_type,
                                              **(akw2 if method.lower() == "golden_gate" else {}))
             except Exception as e:
-                print(f"  ⚠️  조립 실패: {e}\n")
+                print(f"  Assembly failed: {e}\n")
                 return None
 
             if not results:
-                print("  ⚠️  조립 실패\n")
+                print("  Assembly failed\n")
                 return None
 
             record = results[0]
@@ -252,7 +252,7 @@ class BiopartWorkflow(WorkflowBase):
                 from assembly.common import annotate_module_parts_from_layout
                 annotate_module_parts_from_layout(record, parts)
             except Exception as e:
-                print(f"  ⚠️  part feature 기입 생략: {e}")
+                print(f"  Skipped writing part features: {e}")
         elif method.lower() == "golden_gate":
             try:
                 import re
@@ -270,7 +270,7 @@ class BiopartWorkflow(WorkflowBase):
                     overhang_len=getattr(assembler, "overhang_len", 4),
                 )
             except Exception as e:
-                print(f"  ⚠️  part feature 기입 생략: {e}")
+                print(f"  Skipped writing part features: {e}")
 
         return record
 
@@ -356,7 +356,7 @@ class BiopartWorkflow(WorkflowBase):
         vector = None
         if assembly_type == "circular":
             if len(parts) < 2:
-                print("  ⚠️  circular 조립에는 부품 + 중간 벡터가 필요합니다.")
+                print("  Circular assembly needs parts plus an intermediate vector.")
                 return None
             parts, vector = list(parts[:-1]), parts[-1]
 
@@ -438,14 +438,15 @@ class BiopartWorkflow(WorkflowBase):
         # spacer를 부품으로 붙였다면 digest는 벡터 서열을 달고 나온다(모든 module이 같은 말단이 되어
         # 인접 module 순서를 구분할 수 없다). 이 경우 PCR이 맞다.
         if spacers and want == "digest":
-            print("     ⚠️ spacer를 부품으로 붙인 구성입니다 — digest로 꺼내면 벡터 서열이 "
-                  "말단에 남아 module 간 구분이 사라집니다. PCR(spacer 앵커)로 진행합니다.")
+            print("     The spacers were attached as parts - excising by digest would leave vector "
+                  "sequence at the ends and modules would stop being distinguishable. "
+                  "Proceeding by PCR (spacer anchors).")
             want = "pcr"
 
         enzyme, why = self._pick_excision_enzyme(module, prm, vector)
         if want == "digest" and enzyme is None:
             # 실측상 10% 정도는 쓸 효소가 없다 → 조립을 죽이지 않고 pcr로 내린다.
-            print(f"     ⚠️ digest용 효소를 찾지 못해 PCR 방식으로 전환합니다 ({why})")
+            print(f"     No digest enzyme found - switching to the PCR method ({why})")
             want = "pcr"
 
         if want == "digest":
@@ -509,8 +510,8 @@ class BiopartWorkflow(WorkflowBase):
                       if vector is not None else in_mod)
             counts[name] = f"vector {in_vec} / module {in_mod}"
             if in_vec == 2 and in_mod == 2:
-                return name, f"{name} (벡터·module 모두 사이트 2개)"
-        return None, f"쓸 수 있는 효소 없음 {counts}"
+                return name, f"{name} (two sites in both the vector and the module)"
+        return None, f"no usable enzyme {counts}"
 
     @staticmethod
     def _backbone_marker(vector: Optional[Dseqrecord], asm_enzyme: str = "BsaI") -> str:
@@ -544,10 +545,10 @@ class BiopartWorkflow(WorkflowBase):
         try:
             frags = list(module.cut(getattr(Restriction, enzyme_name)))
         except Exception as e:
-            print(f"  ⚠️  excision 절단 실패({enzyme_name}): {e}")
+            print(f"  Excision digest failed ({enzyme_name}): {e}")
             return None
         if len(frags) < 2:
-            print(f"  ⚠️  excision 절단 결과가 {len(frags)}조각 — 꺼낼 수 없습니다.")
+            print(f"  Excision produced {len(frags)} fragments - nothing can be excised.")
             return None
 
         marker = self._backbone_marker(vector, self._asm_enzyme_for(vector))
@@ -558,13 +559,13 @@ class BiopartWorkflow(WorkflowBase):
                 module_frag = cands[0]
             else:
                 module_frag = max(frags, key=lambda f: len(f.seq))
-                print(f"  ⚠️  backbone 판별 모호({len(cands)}조각) — 가장 긴 조각을 module로 봅니다.")
+                print(f"  Backbone is ambiguous ({len(cands)} candidates) - taking the longest fragment as the module.")
         else:
             # 벡터를 못 받은 경우: ori/마커가 있는 backbone이 보통 더 길다는 가정.
             module_frag = min(frags, key=lambda f: len(f.seq))
-            print("  ⚠️  vector 미지정 — 길이로 module 조각을 추정합니다(부정확할 수 있음).")
+            print("  No vector given - guessing the module fragment by length (may be wrong).")
 
-        print(f"  ✂️  excision({enzyme_name}): {len(frags)}조각 → module {len(module_frag.seq)}bp")
+        print(f"  excision({enzyme_name}): {len(frags)} fragments -> module {len(module_frag.seq)}bp")
         return module_frag
 
     def _excise_by_pcr(self, module: Dseqrecord, vector: Optional[Dseqrecord],
@@ -581,7 +582,7 @@ class BiopartWorkflow(WorkflowBase):
             seq = str(module.seq).upper()
             n = len(seq)
             if not anchors:
-                print("  ⚠️  PCR excision: 앵커를 찾지 못해 module 전체를 증폭합니다.")
+                print("  PCR excision: no anchor found - amplifying the whole module.")
                 region = seq
             else:
                 fwd_anchor, rev_anchor = anchors
@@ -589,15 +590,15 @@ class BiopartWorkflow(WorkflowBase):
                 i = doubled.find(fwd_anchor)
                 j = doubled.find(rev_anchor, i + len(fwd_anchor)) if i >= 0 else -1
                 if i < 0 or j < 0 or (j + len(rev_anchor) - i) > n:
-                    print("  ⚠️  PCR excision: 앵커 위치가 모호해 module 전체를 증폭합니다.")
+                    print("  PCR excision: the anchor position is ambiguous - amplifying the whole module.")
                     region = seq
                 else:
                     region = doubled[i: j + len(rev_anchor)]
             linear = Dseqrecord(region, name=module.name)
-            print(f"  🧪 PCR excision: {len(region)}bp 증폭")
+            print(f"  PCR excision: amplifying {len(region)}bp")
             return linear
         except Exception as e:
-            print(f"  ⚠️  PCR 방식 excision 실패: {e}")
+            print(f"  PCR excision failed: {e}")
             return None
 
     @staticmethod
@@ -723,12 +724,12 @@ class BiopartWorkflow(WorkflowBase):
         """
         try:
             if module_df.empty:
-                print("✅ 모듈 정의가 제공되지 않아 모듈 조립을 건너뜁니다.\n")
+                print("No module definition was given - skipping module assembly.\n")
                 self.results['step3'] = {'method': method, 'module_count': 0, 'files': []}
                 return
 
             if 'id' not in module_df.columns:
-                raise ValueError("module_df DataFrame에 'id' 컬럼이 있어야 합니다.")
+                raise ValueError("The module_df DataFrame must have an 'id' column.")
 
             module_df['id'] = module_df['id'].ffill()
 
@@ -742,7 +743,7 @@ class BiopartWorkflow(WorkflowBase):
                 part_names = [row['name'] for _, row in module_rows.iterrows() if pd.notna(row['name'])]
 
                 if not part_names:
-                    print(f"  ⚠️  {module_id}: Part 이름을 찾을 수 없습니다. 건너뜀.\n")
+                    print(f"  {module_id}: part name not found. Skipping.\n")
                     continue
 
                 # part_names 순서에 따라 메모리에서 Dseqrecord 객체를 가져옴
@@ -750,7 +751,7 @@ class BiopartWorkflow(WorkflowBase):
                 if None in part_dseqs:
                     missing_part_index = part_dseqs.index(None)
                     missing_part_name = part_names[missing_part_index]
-                    print(f"  ❌ Part '{missing_part_name}'을(를) 메모리에서 찾을 수 없습니다. 워크플로우를 중단합니다.\n")
+                    print(f"  Part '{missing_part_name}' is not in memory. Stopping the workflow.\n")
                     continue
 
                 # shim 경로: 호출자가 준 module_id(하네스=test_id)를 그대로 사용 → 파일/SHA 불변
@@ -766,7 +767,7 @@ class BiopartWorkflow(WorkflowBase):
             self.results['step3'] = {'method': method, 'module_count': len(saved_files), 'output_dir': str(out_dir), 'files': [f.name for f in saved_files]}
 
         except Exception as e:
-            print(f"\n❌ Step 3 실패: {e}")
+            print(f"\nStep 3 failed: {e}")
             import traceback
             traceback.print_exc()
             raise
@@ -791,7 +792,7 @@ class BiopartWorkflow(WorkflowBase):
             stage별 실행 결과 dict 리스트 (run_plan 반환)
         """
         if not plan:
-            print("⚠️  build plan이 제공되지 않았습니다. 실행할 stage가 없습니다.")
+            print("No build plan was given. There is no stage to run.")
             return []
         return self.run_plan(plan)
 

@@ -112,20 +112,20 @@ r = select_gg_enzyme([part_clean], v_bsai, preferred="BbsI")
 print(f"  벡터사이트={r['vector_sites']}  후보={r['candidates']}  선택={r['enzyme']}")
 check(r["candidates"] == ["BsaI"], "BsaI만 후보", str(r["candidates"]))
 check(r["enzyme"] == "BsaI" and r["switched"], "BbsI → BsaI 전환")
-check("0곳만 잘림" in r["reason"] or "곳만 잘림" in r["reason"],
+check("cut at only 0 site" in r["reason"] or "site(s) by" in r["reason"],
       "사유가 벡터 절단 횟수를 말한다", r["reason"][:70])
 
 print("\n[7] 1곳만 자르는 벡터는 Golden Gate 불가 (좌우 overhang이 같아짐)")
 v_one = Dseqrecord(spaced("GGTCTC", 1), name="v_one_site", circular=True)
 r = select_gg_enzyme([part_clean], v_one, preferred="BsaI")
 check(r["enzyme"] is None, "효소 없음", str(r["enzyme"]))
-check("불가능" in r["reason"], "불가능하다고 명시", r["reason"][:60])
+check("not possible" in r["reason"], "불가능하다고 명시", r["reason"][:60])
 
 print("\n[8] 교집합이 비면 고칠 수 있는 쪽(부품)을 가리킨다")
 r = select_gg_enzyme([Dseqrecord(spaced("GGTCTC", 1), name="p_bad")], v_bsai, preferred="BsaI")
 check(r["enzyme"] is None, "효소 없음")
 check("p_bad" in r["reason"], "막는 부품 이름이 안내에 들어간다", r["reason"][:80])
-check("도메스티케이션" in r["reason"], "도메스티케이션을 권고한다")
+check("domestication" in r["reason"], "도메스티케이션을 권고한다")
 
 print("\n[9] vector=None이면 부품 조건만 본다 (part→module 경로)")
 r = select_gg_enzyme([part_bsai], None, preferred="BsaI")

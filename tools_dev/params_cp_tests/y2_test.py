@@ -97,9 +97,9 @@ check(blocked, "yeast_hr은 반복 부품 설계를 차단한다")
 print("\n[2] 차단 메시지 품질")
 if blocked:
     print("  " + "\n  ".join(msg.splitlines()[:3]))
-    check("공유" in msg, "무엇이 문제인지(서열 공유) 설명")
-    check("형질전환이 곧 조립" in msg, "왜 차단인지(in vivo) 설명")
-    check("다른 부품으로 바꾸세요" in msg, "해결 방법(부품 교체)을 알려줌")
+    check("share sequence" in msg, "무엇이 문제인지(서열 공유) 설명")
+    check("the transformation is the assembly" in msg, "왜 차단인지(in vivo) 설명")
+    check("replace one with a different" in msg, "해결 방법(부품 교체)을 알려줌")
 
 print("\n[3] 반복 부품을 교체하면 통과 (padding 경로는 삭제됨)")
 y_pad = AssemblyFactory.create_assembler("yeast_hr", params=DesignParams())
@@ -151,8 +151,8 @@ print("\n[5] 메타데이터 없음은 unknown (차단 아님)")
 bare = Dseqrecord(seeded(4000, 92), name="V0001", circular=True)
 r = check_yeast_vector(bare)
 check(r["verdict"] == "unknown", "verdict=unknown")
-check("확인할 수 없습니다" in r["warning"], "'확인 불가'로 표현(없다고 단정 안 함)")
-check("없다는 뜻은 아닙니다" in r["warning"], "오해를 막는 문구 포함")
+check("cannot be confirmed" in r["warning"], "'확인 불가'로 표현(없다고 단정 안 함)")
+check("does not\n            mean they are absent" in r["warning"].replace("  ", " ") or "not mean they are absent" in r["warning"], "오해를 막는 문구 포함")
 # 이름 단서만 있는 경우 → partial (보조 증거)
 hinted = Dseqrecord(seeded(4000, 93), name="pRS315", circular=True)
 rh = check_yeast_vector(hinted)
@@ -167,12 +167,12 @@ check(any(YeastHRCloning.IN_VIVO_NOTE in w for w in v_novec["warnings"]),
       "in vivo 전제가 warnings에 있음")
 v_withvec = yeast.validate(construct, vector=bare)
 check("yeast_vector" in v_withvec["details"], "details에 벡터 판정 내역")
-check(any("확인할 수 없습니다" in w for w in v_withvec["warnings"]),
+check(any("cannot be confirmed" in w for w in v_withvec["warnings"]),
       "벡터 경고가 warnings에 추가됨")
 good_vec = vec_with_features("pRS316_like", ["CEN6/ARSH4", "URA3"])
 v_good = yeast.validate(construct, vector=good_vec)
 check(v_good["details"]["yeast_vector"]["verdict"] == "ok", "적격 벡터는 ok")
-check(sum(1 for w in v_good["warnings"] if "벡터" in w) == 0,
+check(sum(1 for w in v_good["warnings"] if "vector" in w.lower()) == 0,
       "적격 벡터면 벡터 경고 없음")
 
 print("\n[7] 서열 오라클 + 원형 산물 정규화 후 유일")

@@ -148,7 +148,7 @@ class SpacerSelector:
                                       design_params=params)
             if results:
                 return True
-            self._record_insertion_failure("조립 결과가 비었습니다(예외 없음)")
+            self._record_insertion_failure("the assembly produced nothing (no exception)")
             return False
         except Exception as e:
             self._record_insertion_failure(f"{type(e).__name__}: {e}")
@@ -164,11 +164,11 @@ class SpacerSelector:
         """가장 흔한 실패 사유 몇 개를 사람이 읽을 형태로."""
         fails = getattr(self, "_insertion_failures", None)
         if not fails:
-            return "(기록된 실패 사유 없음)"
+            return "(no failure reason recorded)"
         total = sum(fails.values())
-        lines = [f"    · {cnt}/{total}회 — {reason}" for reason, cnt in fails.most_common(limit)]
+        lines = [f"    - {cnt}/{total} times: {reason}" for reason, cnt in fails.most_common(limit)]
         if len(fails) > limit:
-            lines.append(f"    · (그 외 {len(fails) - limit}종)")
+            lines.append(f"    - (and {len(fails) - limit} other kinds)")
         return "\n".join(lines)
 
     def select(
@@ -217,20 +217,22 @@ class SpacerSelector:
                                                   circular=bool(getattr(vector, "circular", False)))
             if not usable:
                 raise RuntimeError(
-                    f"vector '{vector.name}'를 정확히 한 곳에서 자르는 효소가 없습니다 "
-                    f"→ **Gibson 삽입 불가 벡터**. spacer를 바꿔도 해결되지 않으므로 "
-                    f"탐색하지 않고 중단합니다. MCS가 있는 벡터를 쓰거나 Golden Gate를 고려하세요."
+                    f"No enzyme cuts vector '{vector.name}' exactly once "
+                    f"-> **this vector cannot take a Gibson insertion**. Changing the spacer "
+                    f"will not help, so the search stops here. Use a vector with an MCS, or "
+                    f"consider Golden Gate."
                 )
             if want and want not in usable:
                 raise RuntimeError(
-                    f"지정한 선형화 효소 {want}는 vector '{vector.name}'를 한 곳에서 자르지 않습니다. "
-                    f"이 벡터에 쓸 수 있는 효소: {', '.join(usable)}. "
-                    f"spacer와 무관한 조건이라 탐색하지 않고 중단합니다."
+                    f"The linearization enzyme you specified, {want}, does not cut vector "
+                    f"'{vector.name}' exactly once. Enzymes usable on this vector: "
+                    f"{', '.join(usable)}. This has nothing to do with the spacer, so the "
+                    f"search stops here."
                 )
 
         pool = self.pool_ids()
         if len(pool) < 2:
-            raise RuntimeError(f"적합풀이 부족합니다({len(pool)}). DB spacer 적재를 확인하세요.")
+            raise RuntimeError(f"The eligible pool is too small ({len(pool)}). Check the spacer load in the DB.")
 
         seqs = {sid: str(self.db.get_part_by_id(SCHEMA, "spacer", sid).seq) for sid in pool}
         ref = seqs[pool[0]]   # 반대쪽 자리 임시 spacer (fwd/rev는 자기 쪽 spacer에만 의존)
@@ -280,25 +282,27 @@ class SpacerSelector:
                 if self._insertion_ok(proxy, vector, method, params=params):
                     if l_deg or r_deg:
                         w = (
-                            f"⚠️ spacer 선정 graceful degradation — clean 후보 부족"
+                            f"Spacer selection fell back gracefully - not enough clean candidates"
                             f"(L clean={n_l_clean}, R clean={n_r_clean}/{len(pool)}). "
-                            f"가장 덜 접히는 후보 사용: L={l_id}(ΔG {l_eval[l_id][1]:.2f}) "
-                            f"R={r_id}(ΔG {r_eval[r_id][1]:.2f}). 조립은 성사되나 첨가제/재검토 권장."
+                            f"using the least-folded candidates: L={l_id}(dG {l_eval[l_id][1]:.2f}) "
+                            f"R={r_id}(dG {r_eval[r_id][1]:.2f}). Assembly will work, but consider additives or a review."
                         )
                         self.last_selection_warnings.append(w)
                         print(w)
                     return l_id, r_id
 
         cap_note = (
-            f" **시도 상한 {MAX_INSERTION_DRYRUNS}회에 걸려 중단**했습니다(후보가 더 남아 있음)."
+            f" **Stopped at the attempt limit of {MAX_INSERTION_DRYRUNS}** (candidates remain)."
             if capped else ""
         )
         raise RuntimeError(
-            f"어떤 L/R 쌍도 실제 조립에 성공하지 못함(degradation 포함) — "
-            f"vector={vector.name}, method={method}, 조립 시도 {tried}회.{cap_note}\n"
-            f"  가장 흔한 실패 사유:\n{self._failure_summary()}\n"
-            f"  → 사유가 모든 쌍에서 같다면 spacer가 아니라 **module/vector 조합 자체** 문제입니다"
-            f"(GG라면 벡터의 조립효소 사이트 수·insert 내부 사이트를 확인하거나 Gibson으로 전환)."
+            f"No L/R pair assembled successfully (including the degraded fallback) - "
+            f"vector={vector.name}, method={method}, {tried} attempts.{cap_note}\n"
+            f"  Most common failure reasons:\n{self._failure_summary()}\n"
+            f"  -> If every pair fails for the same reason, the problem is the "
+            f"**module/vector combination itself**, not the spacer (for Golden Gate, check "
+            f"the number of assembly-enzyme sites in the vector and sites inside the insert, "
+            f"or switch to Gibson)."
         )
 
     def attach(

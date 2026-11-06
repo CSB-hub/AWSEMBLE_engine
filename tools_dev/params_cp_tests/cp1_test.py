@@ -1,5 +1,5 @@
 import sys
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
 from params import DesignParams, DEFAULT_PARAMS, PRIMER3_MAX_SIZE, THERMO_MAX_LEN
 
 ok = True
@@ -48,9 +48,9 @@ e = raises(lambda: d.with_(**_hi).validate())
 chk("overlap 50은 더 이상 하드 에러가 아니다 (H1)", e is None, str(e)[:70])
 _wl = d.with_(**_hi).validate() or []
 chk(f"overlap 50 + min 18 > {THERMO_MAX_LEN} → 경고로 알린다",
-    any("경고 전용" in w for w in _wl), "; ".join(_wl)[:70])
+    any("warning-only" in w for w in _wl), "; ".join(_wl)[:70])
 chk("기본값에는 이 경고가 없다(소음 방지)",
-    not any("경고 전용" in w for w in (d.validate() or [])))
+    not any("warning-only" in w for w in (d.validate() or [])))
 for label, kw in [("min>max", dict(primer_len_min=30)), ("opt 범위 밖", dict(primer_len_opt=40)),
                   # Na 0은 더 이상 오류가 아니다(NEB 버퍼는 K/Tris 기반) — 1가 염 **합산**이 0일 때만 막는다.
                   ("1가 염 전부 0", dict(na_mM=0, k_mM=0, tris_mM=0)),
@@ -65,10 +65,10 @@ print("\n3) 소프트 — 경고만, 차단 안 함")
 #   살아 있으므로, 그 띠 안에서 탐침한다 — 입력 제한 안이면서 일반적 범위 밖인 창.
 #   두 층이 각자 자기 일을 한다는 걸 같이 확인한다(소프트는 경고, 하드는 에러).
 w = d.with_(tm_min=76.0, tm_max=80.0).validate()
-chk("Tm 범위 76~80 → 경고 반환(에러 아님)", any("일반적 범위" in x for x in w), f"{len(w)}건")
+chk("Tm 범위 76~80 → 경고 반환(에러 아님)", any("usual range" in x for x in w), f"{len(w)}건")
 chk("경고가 있어도 예외 없음", isinstance(w, list))
 chk("입력 제한 밖(88℃)은 소프트가 아니라 하드 에러",
-    "입력 허용 범위" in str(raises(lambda: d.with_(tm_min=78.0, tm_max=88.0).validate())))
+    "allowed input range" in str(raises(lambda: d.with_(tm_min=78.0, tm_max=88.0).validate())))
 
 print("\n4) canonical — 해시 재료")
 chk("같은 값 → 같은 문자열", d.canonical() == DesignParams().canonical())

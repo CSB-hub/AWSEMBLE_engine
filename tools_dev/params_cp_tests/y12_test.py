@@ -130,14 +130,14 @@ check(len(plan.crosstalk_pairs) == 1,
       f"{len(plan.crosstalk_pairs)}쌍 / max {plan.max_crosstalk}bp")
 if plan.crosstalk_pairs:
     a, b, n_shared, orient = plan.crosstalk_pairs[0]
-    check(orient == "역상보", "[2] 걸린 방향이 기록된다", f"{a} ↔ {b}: {n_shared}bp {orient}")
+    check(orient == "reverse-complement", "[2] 걸린 방향이 기록된다", f"{a} <-> {b}: {n_shared}bp {orient}")
     check(any("reverse-complement" in w or "역상보" in w for w in plan.warnings),
           "경고 문구에도 방향이 들어간다", (plan.warnings or [""])[0][:62])
 
 # 정방향 케이스도 방향이 바르게 찍히는지 (라벨이 항상 "역상보"로 굳지 않게)
 plan2 = _Plan([_Frag("f1", A_SEQ), _Frag("mid", MID), _Frag("f2", A_SEQ)])
 JunctionPlanner._check_crosstalk(plan2)
-check(plan2.crosstalk_pairs and plan2.crosstalk_pairs[0][3] == "정방향",
+check(plan2.crosstalk_pairs and plan2.crosstalk_pairs[0][3] == "forward",
       "같은 서열 두 벌은 정방향으로 찍힌다",
       str(plan2.crosstalk_pairs[0][2:]) if plan2.crosstalk_pairs else "안 잡힘")
 

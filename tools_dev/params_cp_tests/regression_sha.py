@@ -4,7 +4,7 @@ from pathlib import Path
 
 WHICH = sys.argv[1]
 SRC = {"baseline": "/tmp/claude-1000/-home-csb-Desktop-BioCAD/171b8caf-fb9b-4b74-bfce-a9ecd5beada0/scratchpad/baseline/src",
-       "fixed": "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src"}[WHICH]
+       "fixed": str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src")}[WHICH]
 sys.path.insert(0, SRC)
 from utils.io import DatabaseImport, DNAFileReader, DNAFileWriter
 from workflow.builder import WorkflowBuilder

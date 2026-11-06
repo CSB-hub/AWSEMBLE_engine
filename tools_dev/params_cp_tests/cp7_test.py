@@ -1,6 +1,6 @@
 """CP7 Stage A: circular module 조립이 벡터 backbone을 포함해 성립하는가."""
 import sys, io, contextlib, hashlib
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
 from pydna.dseqrecord import Dseqrecord
 from Bio.Seq import Seq
 from Bio.Restriction import BsaI

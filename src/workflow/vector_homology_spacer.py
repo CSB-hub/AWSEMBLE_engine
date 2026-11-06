@@ -72,7 +72,7 @@ class VectorHomologySpacer:
         seq = str(lin.seq).upper()
         if len(seq) < 2 * ov:
             raise RuntimeError(
-                f"vector가 너무 짧습니다({len(seq)}bp) — homology arm {ov}bp 두 개를 뗄 수 없습니다."
+                f"The vector is too short ({len(seq)}bp) - two homology arms of {ov}bp cannot be taken from it."
             )
 
         l_seq = seq[-ov:]   # 선형 벡터의 3' 끝 → module 왼쪽 끝

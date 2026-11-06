@@ -1,7 +1,7 @@
 """CP7의 record.name 변경이 multimodule(linear) 경로를 깼는지 확인."""
 import sys, io, contextlib, shutil
 from pathlib import Path
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
 from utils.io import DatabaseImport
 from workflow.builder import WorkflowBuilder
 from params import DesignParams

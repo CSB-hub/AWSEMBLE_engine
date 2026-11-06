@@ -180,8 +180,8 @@ class WorkflowBuilder:
                             "tm_diff", "amplicon_len", "note"])
                 w.writerow([insert.name, "gibson", "", "", 0, 0, "", "", "", "",
                             len(insert.seq),
-                            "삽입 프라이머 불필요 — module 양 끝이 이미 vector homology입니다 "
-                            "(spacer_mode=vector_homology). 주문할 삽입용 프라이머가 없습니다."])
+                            "No insertion primers needed - both module ends already carry vector homology "
+                            "(spacer_mode=vector_homology). There are no insertion primers to order."])
             return
 
         fwd, rev = gib.prepare_fragments(insert, vector)
@@ -358,7 +358,7 @@ class WorkflowBuilder:
         cnt = wf.write_cross_checks_csv(out, cross_dimers=xd, crosstalk_pairs=xt,
                                         scans=sc, params=params)
         if cnt:
-            print(f"  📄 교차 검사 {cnt}행 → reports/cross_checks.csv")
+            print(f"  Cross-checks: {cnt} rows -> reports/cross_checks.csv")
         return cnt
 
     @staticmethod
@@ -442,9 +442,9 @@ class WorkflowBuilder:
             # spacer는 부품이 아니라 **중간 벡터에 박혀 있으므로** SpacerSelector를 쓰지 않는다.
             if intermediate_vector is None:
                 raise ValueError(
-                    "circular(중간 클로닝) 모드에는 intermediate_vector가 필요합니다. "
-                    "spacer가 박힌 module GG 벡터를 지정하세요 "
-                    "(tools_dev/make_intermediate_vector.py로 생성 가능)."
+                    "The circular (intermediate cloning) mode needs an intermediate_vector. "
+                    "Specify a module Golden Gate vector that carries the spacers "
+                    "(tools_dev/make_intermediate_vector.py can create one)."
                 )
             return WorkflowBuilder._build_plasmid_circular(
                 parts, vector, intermediate_vector, db, project_dir, insert_method, prm
@@ -626,7 +626,7 @@ class WorkflowBuilder:
 
         n = len(module_groups)
         if n < 2:
-            raise ValueError("module_groups는 2개 이상이어야 합니다(단일 module은 build_plasmid).")
+            raise ValueError("module_groups needs two or more entries (use build_plasmid for a single module).")
 
         # 1) 양 끝 spacer(vector 접점) + 연결 spacer(인접 공유) 배정
         from params import DEFAULT_PARAMS
@@ -656,7 +656,7 @@ class WorkflowBuilder:
             connectors = [s for s in selector.pool_ids()
                           if s not in (l_outer, r_outer)][: n - 1]
         if len(connectors) < n - 1:
-            raise RuntimeError(f"연결 spacer 부족({len(connectors)}/{n - 1}).")
+            raise RuntimeError(f"Not enough connector spacers ({len(connectors)}/{n - 1}).")
         # attach에는 record/ID를 그대로 넘기고, 리포트·테스트가 읽는 boundaries는 **이름**으로.
         bound_items = [l_outer] + connectors + [r_outer]   # 경계 n+1개 (record 또는 ID)
         boundaries = [b.name if hasattr(b, "name") else b for b in bound_items]
@@ -665,8 +665,8 @@ class WorkflowBuilder:
         circular = prm.module_assembly_type == "circular"
         if circular and intermediate_vector is None:
             raise ValueError(
-                "circular(중간 클로닝) multi-module에는 intermediate_vector가 필요합니다. "
-                "spacer는 부품으로 붙으므로 벡터 하나면 모든 module 위치를 커버합니다."
+                "A circular (intermediate cloning) multi-module run needs an intermediate_vector. "
+                "The spacers attach as parts, so one vector covers every module position."
             )
         asm_type = "circular" if circular else "linear"
 

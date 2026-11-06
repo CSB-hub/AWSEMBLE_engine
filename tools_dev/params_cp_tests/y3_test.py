@@ -19,7 +19,7 @@
 """
 import sys
 
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
 
 from utils.io import DatabaseImport
 from params import DesignParams

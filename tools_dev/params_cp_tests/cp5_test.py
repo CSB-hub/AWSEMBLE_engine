@@ -1,7 +1,7 @@
 """CP5: build_plasmid에 다른 params를 주면 산출 프라이머가 실제로 달라지는가."""
 import sys, shutil, hashlib, io, contextlib, csv
 from pathlib import Path
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
 from utils.io import DatabaseImport
 from workflow.builder import WorkflowBuilder
 from params import DesignParams as _DP

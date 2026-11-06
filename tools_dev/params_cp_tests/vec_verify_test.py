@@ -1,7 +1,7 @@
 """생성된 중간 벡터가 조립·excision 양쪽에 쓸 수 있는 구조인가."""
 import sys, os
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/tools_dev")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "tools_dev"))
 from Bio import Restriction
 from Bio.Seq import Seq
 from utils.io import DatabaseImport, DNAFileReader

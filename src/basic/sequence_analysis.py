@@ -209,7 +209,7 @@ def calculate_gc_content(
         - Legacy 코드와 호환성 유지
     """
     if not sequence:
-        raise ValueError("서열이 비어있습니다")
+        raise ValueError("The sequence is empty")
 
     sequence = sequence.upper()
 
@@ -221,7 +221,7 @@ def calculate_gc_content(
     # 윈도우 기반 GC% 계산
     if window > len(sequence):
         raise ValueError(
-            f"윈도우 크기({window})가 서열 길이({len(sequence)})보다 큽니다"
+            f"The window size ({window}) is larger than the sequence length ({len(sequence)})"
         )
 
     gc_percentages = []
@@ -343,14 +343,14 @@ def calculate_tm(
 
     """
     if not sequence:
-        raise ValueError("서열이 비어있습니다")
+        raise ValueError("The sequence is empty")
 
     sequence = sequence.upper()
     bad = set(sequence) - set("ACGT")
     if bad:
         raise ValueError(
-            f"Tm은 ACGT로만 계산합니다 — 허용되지 않는 염기 {sorted(bad)}가 있습니다. "
-            f"(모호 염기가 든 프라이머는 주문할 수 없습니다)"
+            f"Tm is computed on ACGT only - disallowed bases {sorted(bad)} are present. "
+            f"(A primer containing ambiguous bases cannot be ordered.)"
         )
 
     # ⚠️ `dnac2=0`이 **중요하다.** Biopython은 비-자기상보 서열에서 유효 농도를
@@ -482,7 +482,7 @@ def find_restriction_sites(
         {"BsaI": [4], "EcoRI": [], ...}
     """
     if not sequence:
-        raise ValueError("서열이 비어있습니다")
+        raise ValueError("The sequence is empty")
 
     sequence = sequence.upper()
     bio_seq = Seq(sequence)
@@ -501,7 +501,7 @@ def find_restriction_sites(
             try:
                 enzyme_obj = getattr(Restriction, enzyme)
             except AttributeError:
-                raise ValueError(f"알 수 없는 제한효소: {enzyme}")
+                raise ValueError(f"Unknown restriction enzyme: {enzyme}")
 
         return {enzyme: _recognition_positions(sequence, enzyme_obj.site)}
 
@@ -598,7 +598,7 @@ def find_repeats(
         [{'motif': 'ATCG', 'length': 16, 'copy_number': 4, ...}]
     """
     if not sequence:
-        raise ValueError("서열이 비어있습니다")
+        raise ValueError("The sequence is empty")
 
     sequence = sequence.upper()
 
@@ -674,7 +674,7 @@ def find_repeats(
         [{'motif': 'ATCG', 'length': 16, 'copy_number': 4, ...}]
     """
     if not sequence:
-        raise ValueError("서열이 비어있습니다")
+        raise ValueError("The sequence is empty")
 
     sequence = sequence.upper()
 
@@ -748,7 +748,7 @@ def get_sequence_stats(sequence: str) -> Dict:
         0.5
     """
     if not sequence:
-        raise ValueError("서열이 비어있습니다")
+        raise ValueError("The sequence is empty")
 
     sequence = sequence.upper()
 

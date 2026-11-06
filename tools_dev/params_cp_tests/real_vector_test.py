@@ -1,7 +1,7 @@
 """실제 DB 벡터 회귀: V0001(중간 클로닝) + V0002(최종)로 circular 전 구간이 도는가."""
 import sys, io, contextlib, shutil, json
 from pathlib import Path
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
 from Bio import Restriction
 from Bio.Seq import Seq
 from utils.io import DatabaseImport

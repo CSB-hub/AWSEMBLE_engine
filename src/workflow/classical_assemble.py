@@ -101,7 +101,7 @@ class ClassicalWorkflow(WorkflowBase):
         # Insert 파일 읽기
         insert_path = Path(insert_file)
         if not insert_path.exists():
-            raise FileNotFoundError(f"Insert 파일을 찾을 수 없습니다: {insert_file}")
+            raise FileNotFoundError(f"Insert file not found: {insert_file}")
 
         if insert_path.suffix.lower() in ['.gb', '.gbk', '.genbank']:
             insert_list = DNAFileReader.read_genbank(insert_file)
@@ -110,15 +110,15 @@ class ClassicalWorkflow(WorkflowBase):
             insert_list = DNAFileReader.read_fasta(insert_file)
             insert = insert_list[0] if insert_list else None
         else:
-            raise ValueError(f"지원하지 않는 Insert 파일 형식: {insert_path.suffix}")
+            raise ValueError(f"Unsupported insert file format: {insert_path.suffix}")
 
         if insert is None:
-            raise ValueError(f"Insert 파일에 서열이 없습니다: {insert_file}")
+            raise ValueError(f"The insert file has no sequence: {insert_file}")
 
         # Vector 파일 읽기
         vector_path = Path(vector_file)
         if not vector_path.exists():
-            raise FileNotFoundError(f"Vector 파일을 찾을 수 없습니다: {vector_file}")
+            raise FileNotFoundError(f"Vector file not found: {vector_file}")
 
         if vector_path.suffix.lower() in ['.gb', '.gbk', '.genbank']:
             vector_list = DNAFileReader.read_genbank(vector_file)
@@ -127,10 +127,10 @@ class ClassicalWorkflow(WorkflowBase):
             vector_list = DNAFileReader.read_fasta(vector_file)
             vector = vector_list[0] if vector_list else None
         else:
-            raise ValueError(f"지원하지 않는 Vector 파일 형식: {vector_path.suffix}")
+            raise ValueError(f"Unsupported vector file format: {vector_path.suffix}")
 
         if vector is None:
-            raise ValueError(f"Vector 파일에 서열이 없습니다: {vector_file}")
+            raise ValueError(f"The vector file has no sequence: {vector_file}")
 
         return insert, vector
 
@@ -173,7 +173,7 @@ class ClassicalWorkflow(WorkflowBase):
                 f"Must be one of {valid_formats}"
             )
 
-        print(f"결과 저장 중: {self.output_dir}/")
+        print(f"Saving results to: {self.output_dir}/")
 
         saved_paths = []
 
@@ -192,7 +192,7 @@ class ClassicalWorkflow(WorkflowBase):
                 saved_paths.append(fasta_path)
                 print(f"  ✅ {fasta_path.name}")
 
-        print(f"\n총 {len(saved_paths)}개 파일 저장 완료")
+        print(f"\nSaved {len(saved_paths)} files")
         return saved_paths
 
     def run(
@@ -242,7 +242,7 @@ class ClassicalWorkflow(WorkflowBase):
         print()
 
         # 1. 파일 읽기 → run_plan artifact registry seed
-        print("📁 파일 로딩 중...")
+        print("Loading files...")
         insert, vector = self.load_sequences(insert_file, vector_file)
         print(f"  Insert: {len(insert.seq)} bp | Vector: {len(vector.seq)} bp\n")
         self.parts = [insert, vector]
@@ -257,7 +257,7 @@ class ClassicalWorkflow(WorkflowBase):
 
         print()
         print("=" * 60)
-        print("  워크플로우 완료!")
+        print("  Workflow complete")
         print("=" * 60)
 
         return [o["record"] for o in outs]

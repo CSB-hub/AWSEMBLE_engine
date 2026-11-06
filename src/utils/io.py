@@ -77,8 +77,8 @@ class DatabaseImport:
 
         if not all([self.host, self.port, self.user, self.password]):
             raise ConnectionError(
-                "HOST, PORT, USER, PASSWORD 환경 변수를 모두 설정해야 합니다. "
-                f"(검색된 .env 경로: {env_path})"
+                "HOST, PORT, USER and PASSWORD must all be set. "
+                f"(.env path searched: {env_path})"
             )
         
         self.conn = None
@@ -95,7 +95,7 @@ class DatabaseImport:
             )
             return self.conn.is_connected()
         except Error as e:
-            print(f"'{schema_name}' 데이터베이스 연결 중 오류 발생: {e}")
+            print(f"Error connecting to database '{schema_name}': {e}")
             self.conn = None
             return False
 
@@ -238,12 +238,12 @@ class DNAFileReader:
         """FASTA 파일 읽기 → Dseqrecord 리스트"""
         file_path = Path(file_path)
         if not file_path.exists():
-            raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_path}")
+            raise FileNotFoundError(f"File not found: {file_path}")
 
         try:
             records = list(SeqIO.parse(file_path, "fasta"))
             if not records:
-                raise ValueError(f"FASTA 파일에 서열이 없습니다: {file_path}")
+                raise ValueError(f"The FASTA file has no sequence: {file_path}")
 
             dseqrecords = []
             for record in records:
@@ -253,26 +253,26 @@ class DNAFileReader:
                 dseqrecords.append(dseq)
             return dseqrecords
         except Exception as e:
-            raise ValueError(f"FASTA 파싱 오류 ({file_path}): {e}")
+            raise ValueError(f"FASTA parse error ({file_path}): {e}")
 
     @staticmethod
     def read_genbank(file_path: Union[str, Path]) -> List[Dseqrecord]:
         """GenBank 파일 읽기 → Dseqrecord 리스트 (Features 및 Circular 여부 보존)"""
         file_path = Path(file_path)
         if not file_path.exists():
-            raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_path}")
+            raise FileNotFoundError(f"File not found: {file_path}")
 
         try:
             records = list(SeqIO.parse(file_path, "genbank"))
             if not records:
-                raise ValueError(f"GenBank 파일에 서열이 없습니다: {file_path}")
+                raise ValueError(f"The GenBank file has no sequence: {file_path}")
 
             return [
                 DNAFileReader._restore_annotations(Dseqrecord.from_SeqRecord(record))
                 for record in records
             ]
         except Exception as e:
-            raise ValueError(f"GenBank 파싱 오류 ({file_path}): {e}")
+            raise ValueError(f"GenBank parse error ({file_path}): {e}")
 
     @staticmethod
     def _restore_annotations(dseq: Dseqrecord) -> Dseqrecord:
@@ -307,7 +307,7 @@ class DNAFileReader:
         """디렉토리 내 모든 GenBank 파일 배치 읽기 (.gb 확장자)"""
         directory = Path(directory)
         if not directory.is_dir():
-            raise ValueError(f"디렉토리가 아닙니다: {directory}")
+            raise ValueError(f"Not a directory: {directory}")
 
         result = {}
         for gb_file in sorted(directory.glob("*.gb")):
@@ -316,7 +316,7 @@ class DNAFileReader:
                 if dseqs:
                     result[gb_file.name] = dseqs[0]
             except Exception as e:
-                print(f"⚠️ 파일 읽기 실패 ({gb_file.name}): {e}")
+                print(f"Could not read file ({gb_file.name}): {e}")
         return result
 
 
@@ -403,24 +403,24 @@ class DNAValidator:
         try:
             results = DNAFileReader.read_genbank(gbk_path)
         except Exception:
-            print(f"❌ [{test_id}] 결과 파일을 읽을 수 없습니다.")
+            print(f"[{test_id}] Could not read the result file.")
             return False
         
         full_seq = str(results[0].seq).upper()
         ordered_parts = self.db.get_ordered_parts_by_test_id(test_id)
         
         if not ordered_parts:
-            print(f"❌ [{test_id}] DB에서 부품 구성을 찾을 수 없습니다.")
+            print(f"[{test_id}] Could not find the part composition in the DB.")
             return False
 
         current_pos = 0
         success = True
-        print(f"\n🔍 [{test_id}] 정밀 검증 시작...")
+        print(f"\n[{test_id}] Starting detailed validation...")
         
         for i, (part_id, part_type) in enumerate(ordered_parts, 1):
             part_record = self.db.get_part_by_id("Bioparts", part_type, part_id)
             if not part_record:
-                print(f"  [{i}] ⚠️ {part_id}: DB 서열 누락")
+                print(f"  [{i}] {part_id}: sequence missing in the DB")
                 success = False
                 continue
                 
@@ -429,17 +429,17 @@ class DNAValidator:
             match_pos = full_seq.find(ref_seq, max(0, current_pos - 100))
             
             if match_pos == -1:
-                print(f"  [{i}] ❌ {part_id}: 서열 또는 순서 불일치")
+                print(f"  [{i}] {part_id}: sequence or order mismatch")
                 success = False
                 continue
                 
-            print(f"  [{i}] ✅ {part_id}: Pass (위치: {match_pos})")
+            print(f"  [{i}] {part_id}: Pass (at {match_pos})")
             current_pos = match_pos + len(ref_seq)
 
         if success:
-            print(f"🎉 [{test_id}] 모든 검증 통과 (순서 및 서열 일치)")
+            print(f"[{test_id}] All checks passed (order and sequence match)")
         else:
-            print(f"⚠️ [{test_id}] 일부 검증 실패")
+            print(f"[{test_id}] Some checks failed")
             
         return success
 

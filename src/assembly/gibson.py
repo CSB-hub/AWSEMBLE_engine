@@ -197,7 +197,7 @@ class GibsonCloning(AssemblyBase):
         )
         if not basic.get("forward") or not basic.get("reverse"):
             raise RuntimeError(
-                f"general-prep 프라이머 설계 실패(insert={insert.name}, "
+                f"general-prep primer design failed (insert={insert.name}, "
                 f"target={target_start}-{target_end}): {basic.get('warnings')}"
             )
         basic_fwd = basic["forward"]      # insert 시작 anneal (target_start부터)
@@ -377,8 +377,8 @@ class GibsonCloning(AssemblyBase):
             # 양쪽을 같은 k만큼 민다 — 실측 평균 필요 shift가 1nt 미만이라 대칭으로 충분하다.
             if len(template) - 2 * k < self.params.amp_min:
                 attempts.append(
-                    f"k={k}: 남는 증폭 구간({len(template) - 2 * k}bp)이 amp_min"
-                    f"({self.params.amp_min}bp) 미만 → 더 밀 수 없음"
+                    f"k={k}: the remaining amplicon ({len(template) - 2 * k}bp) is below amp_min"
+                    f"({self.params.amp_min}bp) -> cannot shift further"
                 )
                 break
             try:
@@ -396,15 +396,15 @@ class GibsonCloning(AssemblyBase):
             if cand.get("forward") and cand.get("reverse"):
                 basic, shift = cand, k
                 break
-            attempts.append(f"k={k}: {'; '.join(cand.get('warnings') or ['사유 없음'])[:80]}")
+            attempts.append(f"k={k}: {'; '.join(cand.get('warnings') or ['no reason given'])[:80]}")
 
         if basic is None:
             raise RuntimeError(
-                f"fragment '{frag.name}'(템플릿 {len(template)}bp) 프라이머 설계 실패 — "
-                f"anneal 시작점을 0~{self.MAX_ANNEAL_SHIFT}nt까지 밀어도 후보가 없습니다.\n"
-                f"  시도 내역: {' / '.join(attempts[:4])}\n"
-                f"  → Tm 선언 범위([{self.params.tm_min}, {self.params.tm_max}])를 넓히거나 "
-                f"이 부품을 이웃과 합쳐 올리고로 주문하세요."
+                f"Primer design failed for fragment '{frag.name}' (template {len(template)}bp) - "
+                f"no candidate even after shifting the anneal start by 0-{self.MAX_ANNEAL_SHIFT}nt.\n"
+                f"  Attempts: {' / '.join(attempts[:4])}\n"
+                f"  -> Widen the declared Tm window ([{self.params.tm_min}, {self.params.tm_max}]) "
+                f"or merge this part with a neighbour and order it as an oligo."
             )
 
         recovered_left = template[:shift]
@@ -420,8 +420,8 @@ class GibsonCloning(AssemblyBase):
         notes = list(frag.notes)
         if shift:
             notes.append(
-                f"anneal 시작점을 양쪽 {shift}nt 안으로 밀어 설계했습니다 "
-                f"(잃은 염기는 프라이머 tail로 복원 — 산물은 동일)"
+                f"The anneal start was shifted inward by {shift}nt on both sides "
+                f"(the lost bases are restored in the primer tail - the product is identical)"
             )
         # ⚠️ **설계기가 한 말을 버리지 않는다.** `design_basic_primers`는 요청한
         #    Tm/GC/길이 범위로 primer3가 후보를 하나도 못 내면 **기본 범위로 폴백**하고
@@ -497,16 +497,16 @@ class GibsonCloning(AssemblyBase):
             # 품질 검증 실패가 설계를 막지는 않는다 — 산출물은 내보내고 사실을 남긴다.
             return {
                 "tier": "unknown",
-                "messages": [f"품질 검증 실패({type(exc).__name__}: {str(exc)[:60]}) "
-                             f"— 프라이머는 설계됐지만 품질을 판정하지 못했습니다."],
+                "messages": [f"Quality check failed ({type(exc).__name__}: {str(exc)[:60]}) "
+                             f"- the primers were designed but could not be judged."],
                 "engine": engine,
             }
 
         msgs = list(v.get("violations") or []) + list(v.get("warnings") or [])
         if engine == "viennarna":
             msgs.append(
-                f"프라이머가 {len(primer)}nt로 primer3 계산 상한({THERMO_MAX_LEN}nt)을 "
-                f"넘습니다 — hairpin/dimer는 **경고 전용**으로만 판정됩니다."
+                f"The primer is {len(primer)}nt, above the primer3 calculation limit ({THERMO_MAX_LEN}nt) "
+                f"- hairpin/dimer are judged **warning-only**."
             )
         return {"tier": v.get("tier", "unknown"), "messages": msgs, "engine": engine}
 
@@ -552,7 +552,7 @@ class GibsonCloning(AssemblyBase):
         try:
             pcr_product = pcr(forward_primer, reverse_primer, insert)
         except Exception as e:
-            raise RuntimeError(f"PCR 시뮬레이션 실패: {e}")
+            raise RuntimeError(f"PCR simulation failed: {e}")
 
         return pcr_product
 
@@ -589,8 +589,8 @@ class GibsonCloning(AssemblyBase):
         # Assembly_type 검증
         if assembly_type not in ["circular", "linear"]:
             raise ValueError(
-                f"assembly_type은 'circular' 또는 'linear'이어야 합니다. "
-                f"입력값: {assembly_type}"
+                f"assembly_type must be 'circular' or 'linear'. "
+                f"Got: {assembly_type}"
             )
 
         # Assembly 수행 (limit=overlap_length)
@@ -607,7 +607,7 @@ class GibsonCloning(AssemblyBase):
             results = asm.assemble_linear()
 
         if not results:
-            raise RuntimeError("Assembly 실패: 결과물이 생성되지 않았습니다.")
+            raise RuntimeError("Assembly failed: no product was produced.")
 
         return results
 
@@ -636,11 +636,11 @@ class GibsonCloning(AssemblyBase):
 
         # 1. 최소 길이 체크
         if len(result.seq) < 100:
-            warnings.append(f"조립 결과가 짧습니다: {len(result.seq)} bp")
+            warnings.append(f"The assembly product is short: {len(result.seq)} bp")
 
         # 2. Feature 개수 체크
         if len(result.features) == 0:
-            warnings.append("Feature가 없습니다")
+            warnings.append("There are no features")
 
         return {
             'valid': len(errors) == 0,
@@ -676,18 +676,18 @@ class GibsonCloning(AssemblyBase):
             - Insert는 linear여야 함 (권장)
         """
         if not isinstance(insert, Dseqrecord):
-            raise ValueError("insert는 Dseqrecord 타입이어야 합니다")
+            raise ValueError("insert must be a Dseqrecord")
 
         if not isinstance(vector, Dseqrecord):
-            raise ValueError("vector는 Dseqrecord 타입이어야 합니다")
+            raise ValueError("vector must be a Dseqrecord")
 
         # Vector는 circular여야 함 (linearization 전)
         if not vector.circular:
-            print("⚠️  경고: Vector가 circular가 아닙니다. 이미 linearized된 vector일 수 있습니다.")
+            print("Warning: the vector is not circular. It may already be linearized.")
 
         # Insert는 linear 권장 (하지만 필수는 아님)
         if insert.circular:
-            print("⚠️  경고: Insert가 circular입니다. Linear DNA 권장.")
+            print("Warning: the insert is circular. Linear DNA is recommended.")
 
     @staticmethod
     def _usable_here(vector: Dseqrecord) -> list:
@@ -730,35 +730,35 @@ class GibsonCloning(AssemblyBase):
             name = self.linearization_enzyme
             enzyme = getattr(Restriction, name, None)
             if enzyme is None:
-                raise RuntimeError(f"Vector linearization 실패: 알 수 없는 효소 '{name}'")
+                raise RuntimeError(f"Vector linearization failed: unknown enzyme '{name}'")
             n = len(enzyme.search(vector.seq))
             if n != 1:
                 usable = self._usable_here(vector)
-                hint = (f"이 벡터에 쓸 수 있는 효소: {', '.join(usable)}" if usable
-                        else "이 벡터는 후보 전체에서 1곳 절단 효소가 없습니다 — Gibson 삽입 불가")
+                hint = (f"Enzymes usable on this vector: {', '.join(usable)}" if usable
+                        else "No candidate cuts this vector exactly once - Gibson insertion is not possible")
                 raise RuntimeError(
-                    f"Vector linearization 실패: 지정한 효소 {name}이 이 벡터를 "
-                    f"{n}곳에서 자릅니다(정확히 1곳이어야 합니다). {hint}"
+                    f"Vector linearization failed: the enzyme {name} you specified cuts this vector at "
+                    f"{n} sites (it must cut exactly once). {hint}"
                 )
-            print(f"✓ Vector linearization 성공: {name} (유저 지정)")
+            print(f"Vector linearization OK: {name} (user-specified)")
             return vector.cut(enzyme)[0]
 
         for enzyme_name in LINEARIZATION_ENZYMES:
             enzyme = getattr(Restriction, enzyme_name)
             if len(enzyme.search(vector.seq)) == 1:
-                print(f"✓ Vector linearization 성공: {enzyme_name}")
+                print(f"Vector linearization OK: {enzyme_name}")
                 return vector.cut(enzyme)[0]
 
         # 전부 실패 = 이 벡터는 Gibson 삽입 불가. 몇 번씩 자르는지까지 보여준다.
         detail = ", ".join(
-            f"{n}({len(getattr(Restriction, n).search(vector.seq))}회)"
+            f"{n}({len(getattr(Restriction, n).search(vector.seq))}x)"
             for n in LINEARIZATION_ENZYMES
         )
         raise RuntimeError(
-            f"Vector linearization 실패: 후보 {len(LINEARIZATION_ENZYMES)}종 중 "
-            f"이 벡터를 정확히 한 곳에서 자르는 효소가 없습니다 → **Gibson 삽입 불가 벡터**입니다. "
-            f"MCS가 있는 벡터를 쓰거나 Golden Gate 삽입을 고려하세요. "
-            f"[절단 횟수] {detail}"
+            f"Vector linearization failed: none of the {len(LINEARIZATION_ENZYMES)} candidates cuts "
+            f"this vector exactly once -> **this vector cannot take a Gibson insertion**. "
+            f"Use a vector with an MCS, or consider Golden Gate insertion. "
+            f"[cut counts] {detail}"
         )
 
     def _validate_primer_length(
@@ -784,8 +784,8 @@ class GibsonCloning(AssemblyBase):
         """
         while len(insert.seq) < len(fwd) + len(rev):
             print(
-                f"⚠️  Warning: Insert {insert.name} ({len(insert.seq)} bp)가 "
-                f"프라이머보다 짧습니다. 프라이머 단축: "
+                f"Warning: insert {insert.name} ({len(insert.seq)} bp) is shorter than the "
+                f"primer. Shortening the primer: "
                 f"{len(fwd)} bp → {len(fwd)-1} bp"
             )
             fwd = fwd[:-1]
@@ -929,12 +929,12 @@ class GibsonCloning(AssemblyBase):
         if total_count == 1:
             return True
         elif total_count == 0:
-            print(f"⚠️  경고: 프라이머가 template에 결합하지 않습니다")
+            print(f"Warning: the primer does not bind the template")
             return False
         else:
             print(
-                f"⚠️  경고: 프라이머가 template에 {total_count}번 결합합니다 "
-                f"(off-target 위험)"
+                f"Warning: the primer binds the template {total_count} times "
+                f"(off-target risk)"
             )
             return False
 
@@ -990,12 +990,12 @@ class GibsonCloning(AssemblyBase):
         # (module part feature에 실제 GenBank type이 붙기 전엔 전부 misc_feature라
         #  감지가 늘 실패해서 우연히 전체 서열 fallback으로 맞았던 자리다.)
         if insert.annotations.get("insert_whole"):
-            print(f"✓ insert 전체 사용 (biopart module/multimodule): 0-{len(insert.seq)}")
+            print(f"Using the whole insert (biopart module/multimodule): 0-{len(insert.seq)}")
             return 0, len(insert.seq)
 
         # Features가 없으면 전체 사용
         if not insert.features:
-            print("⚠️  경고: Insert에 feature가 없습니다. 전체 서열을 사용합니다.")
+            print("Warning: the insert has no features. Using the whole sequence.")
             return 0, len(insert.seq)
 
         # 1. feature_label로 검색 (가장 높은 우선순위)
@@ -1005,7 +1005,7 @@ class GibsonCloning(AssemblyBase):
                 if label and feature_label.lower() in label.lower():
                     start = int(feature.location.start)
                     end = int(feature.location.end)
-                    print(f"✓ Feature 감지 (label={label}): {start}-{end} ({end-start} bp)")
+                    print(f"Feature found (label={label}): {start}-{end} ({end-start} bp)")
                     return start, end
 
         # 2. feature_type으로 검색
@@ -1015,7 +1015,7 @@ class GibsonCloning(AssemblyBase):
                     start = int(feature.location.start)
                     end = int(feature.location.end)
                     label = feature.qualifiers.get('label', [''])[0]
-                    print(f"✓ Feature 감지 (type={feature_type}, label={label}): {start}-{end} ({end-start} bp)")
+                    print(f"Feature found (type={feature_type}, label={label}): {start}-{end} ({end-start} bp)")
                     return start, end
 
         # 3. 기본값: "CDS" 타입 검색
@@ -1024,11 +1024,11 @@ class GibsonCloning(AssemblyBase):
                 start = int(feature.location.start)
                 end = int(feature.location.end)
                 label = feature.qualifiers.get('label', [''])[0]
-                print(f"✓ Feature 감지 (CDS, label={label}): {start}-{end} ({end-start} bp)")
+                print(f"Feature found (CDS, label={label}): {start}-{end} ({end-start} bp)")
                 return start, end
 
         # 4. Fallback: 전체 서열 사용
-        print("⚠️  경고: 적절한 feature를 찾지 못했습니다. 전체 서열을 사용합니다.")
+        print("Warning: no suitable feature found. Using the whole sequence.")
         return 0, len(insert.seq)
 
 

@@ -120,23 +120,23 @@ def select_gg_enzyme(parts: List[Dseqrecord], vector: Optional[Dseqrecord] = Non
     if not candidates:
         bits = []
         if vector is not None:
-            usable = [f"{e}({vector_sites[e]}곳)" for e in enzymes if vector_sites[e] >= VECTOR_MIN_SITES]
+            usable = [f"{e}({vector_sites[e]} sites)" for e in enzymes if vector_sites[e] >= VECTOR_MIN_SITES]
             vname = getattr(vector, "name", "vector")
             bits.append(
-                f"벡터 '{vname}'를 {VECTOR_MIN_SITES}곳 이상 자르는 효소: "
-                + (", ".join(usable) if usable else "없음")
+                f"Enzymes cutting vector '{vname}' at {VECTOR_MIN_SITES} or more sites: "
+                + (", ".join(usable) if usable else "none")
             )
         for e in enzymes:
             if blocked_by[e]:
-                bits.append(f"{e}는 부품 내부에 사이트가 있음: {', '.join(blocked_by[e])}")
+                bits.append(f"{e} has sites inside parts: {', '.join(blocked_by[e])}")
         return {
             'enzyme': None, 'candidates': [], 'switched': False,
             'vector_sites': vector_sites, 'blocked_by': blocked_by,
             'reason': (
-                "Golden Gate 조립이 불가능합니다 — 벡터와 모든 부품을 동시에 만족하는 "
-                f"Type IIS 효소가 없습니다.\n   - " + "\n   - ".join(bits)
-                + "\n   → 부품 내부 사이트를 제거(도메스티케이션)하거나, 다른 벡터를 "
-                  "고르거나, Gibson·Module based 방식을 쓰세요."
+                "Golden Gate assembly is not possible - no Type IIS enzyme satisfies the vector "
+                f"and every part at once.\n   - " + "\n   - ".join(bits)
+                + "\n   -> Remove the internal sites (domestication), choose a different "
+                  "vector, or use Gibson / Module-based assembly."
             ),
         }
 
@@ -147,17 +147,17 @@ def select_gg_enzyme(parts: List[Dseqrecord], vector: Optional[Dseqrecord] = Non
     chosen = candidates[0]
     why = []
     if preferred and blocked_by.get(preferred):
-        why.append(f"부품 내부에 {preferred} 사이트가 있음({', '.join(blocked_by[preferred])})")
+        why.append(f"parts contain {preferred} sites ({', '.join(blocked_by[preferred])})")
     if preferred and vector is not None and vector_sites.get(preferred, 0) < VECTOR_MIN_SITES:
-        why.append(f"벡터가 {preferred}로 {vector_sites.get(preferred, 0)}곳만 잘림")
+        why.append(f"the vector is cut at only {vector_sites.get(preferred, 0)} site(s) by {preferred}")
     return {
         'enzyme': chosen, 'candidates': candidates, 'switched': bool(preferred),
         'vector_sites': vector_sites, 'blocked_by': blocked_by,
         'reason': (
-            f"조립 효소를 {preferred} → {chosen}로 전환했습니다"
+            f"Switched the assembly enzyme from {preferred} to {chosen}"
             + (f" ({'; '.join(why)})" if why else "")
-            + f". 사용 가능 후보: {candidates}"
-        ) if preferred else f"조립 효소로 {chosen}를 선택했습니다. 후보: {candidates}",
+            + f". Usable candidates: {candidates}"
+        ) if preferred else f"Selected {chosen} as the assembly enzyme. Candidates: {candidates}",
     }
 
 
@@ -197,8 +197,8 @@ class GoldenGateModule(AssemblyBase):
         # (EcoRI처럼 Type IIS가 아닌 효소도 Biopython엔 있으므로 hasattr 검사만으론 못 거른다)
         if name not in SUPPORTED_ENZYMES:
             raise ValueError(
-                f"지원하지 않는 제한효소: {name!r} (지원: {list(SUPPORTED_ENZYMES)}). "
-                f"Type IIS 효소만 Golden Gate에 쓸 수 있습니다."
+                f"Unsupported restriction enzyme: {name!r} (supported: {list(SUPPORTED_ENZYMES)}). "
+                f"Golden Gate only accepts Type IIS enzymes."
             )
         enzyme = getattr(Restriction, name)
 
@@ -275,13 +275,14 @@ class GoldenGateModule(AssemblyBase):
             )
             if alt is None:
                 raise RuntimeError(
-                    f"접합부 '{parts[j].name}|{parts[j+1].name}'에서 어떤 overhang 후보도 "
-                    f"제한효소 사이트 생성을 피하지 못했습니다(후보 {len(pool)}개). "
-                    f"원팟 Golden Gate에서는 그 자리가 반응 내내 다시 잘리므로 진행하지 않습니다. "
-                    f"부품 말단을 조금 옮기거나 다른 효소를 쓰세요."
+                    f"At junction '{parts[j].name}|{parts[j+1].name}' no overhang candidate avoided "
+                    f"creating a restriction site ({len(pool)} candidates tried). "
+                    f"In one-pot Golden Gate that position would be re-cut throughout the "
+                    f"reaction, so this does not proceed. Shift the part ends slightly or "
+                    f"use a different enzyme."
                 )
-            print(f"     🔄 접합부 {parts[j].name}|{parts[j+1].name}: overhang {oh} → {alt} "
-                  f"(원래 것은 제한효소 사이트를 만듦)")
+            print(f"     [swap] junction {parts[j].name}|{parts[j+1].name}: overhang {oh} -> {alt} "
+                  f"(the original one created a restriction site)")
             used.discard(oh.upper())
             used.add(alt)
             out[j] = alt
@@ -323,10 +324,10 @@ class GoldenGateModule(AssemblyBase):
         if not sized:
             have = sorted({len(q) for q in pool_list})
             raise ValueError(
-                f"{self.enzyme_name}는 {oh_len}nt overhang이 필요한데, 사용 가능한 overhang 후보가 "
-                f"{have}nt뿐입니다(후보 {len(pool_list)}개). "
-                f"{oh_len}nt overhang 세트를 DB(`overhang` 테이블, institution='Awsemble')에 "
-                f"등록해야 이 효소를 쓸 수 있습니다."
+                f"{self.enzyme_name} needs {oh_len}nt overhangs, but the available candidates are "
+                f"only {have}nt ({len(pool_list)} candidates). "
+                f"Register a {oh_len}nt overhang set in the DB (`overhang` table, "
+                f"institution='Awsemble') before using this enzyme."
             )
         pool_list = sized
 
@@ -350,7 +351,7 @@ class GoldenGateModule(AssemblyBase):
     ) -> List[Dict]:
         """조립 준비 (오버행 할당 및 프라이머 설계)"""
         if not parts:
-            raise ValueError("parts 리스트가 비어있습니다")
+            raise ValueError("The parts list is empty")
 
         num_parts = len(parts)
 
@@ -365,7 +366,7 @@ class GoldenGateModule(AssemblyBase):
             # E-1: 입력 부품 검증 — ATGC만 허용(N/IUPAC·빈 서열 거부). 모호코드는 조립 불가로 차단.
             if not validate_dna_sequence(str(p.seq)):
                 raise ValueError(
-                    f"입력 부품 '{p.name}'에 ATGC 외 염기(N/IUPAC) 또는 빈 서열 포함 → 조립 불가 (E-1 입력검증)"
+                    f"Input part '{p.name}' contains non-ATGC bases (N/IUPAC) or an empty sequence -> cannot assemble (E-1 input check)"
                 )
             res_check = check_restriction_site_in_part_sequence(
                 str(p.seq), enzymes=list(SUPPORTED_ENZYMES)
@@ -384,19 +385,19 @@ class GoldenGateModule(AssemblyBase):
             alts = [n for n in SUPPORTED_ENZYMES if n != chosen and not found.get(n)]
             if not alts:
                 detail = "\n".join(
-                    f"   - {n} 발견: {', '.join(v)}" for n, v in found.items() if v
+                    f"   - {n} found: {', '.join(v)}" for n, v in found.items() if v
                 )
                 error_msg = (
-                    f"❌ 제한효소 충돌: 지원 효소 {list(SUPPORTED_ENZYMES)} 전부가 부품 내부에 "
-                    f"인식 서열을 갖고 있어 Golden Gate 조립이 불가능합니다.\n{detail}\n"
-                    f"   - 해결책: 해당 부품 서열에서 인식 서열을 제거(도메스티케이션)하거나 다른 조립 방식을 쓰세요."
+                    f"Restriction enzyme conflict: every supported enzyme {list(SUPPORTED_ENZYMES)} has a "
+                    f"recognition site inside the parts, so Golden Gate assembly is not possible.\n{detail}\n"
+                    f"   - Fix: remove the recognition sites from those part sequences (domestication), or use another assembly method."
                 )
                 print(error_msg)
                 raise RuntimeError(error_msg)
             target_enzyme = alts[0]
             print(
-                f"     ⚠️ 선택한 {chosen} 인식 서열이 부품 내부에 있습니다"
-                f"({', '.join(found[chosen])}) → 조립 전체를 {target_enzyme}로 전환합니다."
+                f"     [WARN] the chosen {chosen} recognition site occurs inside parts "
+                f"({', '.join(found[chosen])}) -> switching the whole assembly to {target_enzyme}."
             )
 
         # TODO: 위와 동일하게 overhang 재사용 고려
@@ -405,7 +406,7 @@ class GoldenGateModule(AssemblyBase):
         # 2. 오버행 할당 명단(all_ohs) 생성
         if assembly_type == "circular":
             if not vector:
-                raise ValueError("Circular 조립을 위해서는 vector가 필요합니다.")
+                raise ValueError("Circular assembly requires a vector.")
             v_left, v_right = self.extract_vector_overhangs(vector)
             internal_ohs = self._get_high_fidelity_overhang_set(num_parts - 1)
             internal_ohs = self._avoid_site_creating_overhangs(
@@ -426,7 +427,7 @@ class GoldenGateModule(AssemblyBase):
         from Bio.Seq import Seq as _Seq
         oh_id_map = getattr(self, '_oh_id_map', {})   # 서열→overhang id (report용)
         design_results = []
-        print(f"\n✨ Golden Gate 부품 설계 상세 (모드: {assembly_type}, Enzyme: {target_enzyme})")
+        print(f"\nGolden Gate part design detail (mode: {assembly_type}, enzyme: {target_enzyme})")
         for i, part in enumerate(parts):
             # [FIX] 인접 부품의 노출 overhang이 상보(RC)가 되도록 left_oh만 RC로 할당.
             #   part i는 bottom 5'overhang = right_oh(공유 fusion 그대로),
@@ -609,7 +610,7 @@ class GoldenGateModule(AssemblyBase):
 
         frag = Dseqrecord(frag_seq)
         frag.name = dseq.name
-        print(f"  🔪 [{dseq.name}] prepared fragment 슬라이스 (Enzyme: {enzyme_name}, "
+        print(f"  [cut] [{dseq.name}] prepared fragment slice (enzyme: {enzyme_name}, "
               f"front={front} back={back} → {len(frag_seq)}bp)")
         return frag
 
@@ -672,7 +673,7 @@ class GoldenGateModule(AssemblyBase):
             pcr_product.annotations.update(insert.annotations)
             return pcr_product
         except Exception as e:
-            raise RuntimeError(f"PCR 시뮬레이션 실패: {e}")
+            raise RuntimeError(f"PCR simulation failed: {e}")
 
     def assemble(
             self,
@@ -695,10 +696,10 @@ class GoldenGateModule(AssemblyBase):
             from Bio.Seq import Seq
             
             if assembly_type not in ["circular", "linear"]:
-                raise ValueError(f"assembly_type 오류: {assembly_type}")
+                raise ValueError(f"Invalid assembly_type: {assembly_type}")
 
             if not fragments:
-                raise ValueError("조립할 Fragment가 비어 있습니다.")
+                raise ValueError("There are no fragments to assemble.")
 
             try:
                 # 첫 번째 조각으로 조립 시작
@@ -720,8 +721,8 @@ class GoldenGateModule(AssemblyBase):
                     #  노출해 상보결합 — top strand 표현에서는 동일 4bp로 보인다.)
                     if prev_right != curr_left:
                         error_msg = (
-                            f"Overhang 불일치: {prev_part.name} 끝({prev_right})과 "
-                            f"{curr_part.name} 시작({curr_left})이 일치하지 않습니다."
+                            f"Overhang mismatch: the end of {prev_part.name} ({prev_right}) does not "
+                            f"match the start of {curr_part.name} ({curr_left})."
                         )
                         raise ValueError(error_msg)
 
@@ -743,9 +744,9 @@ class GoldenGateModule(AssemblyBase):
                 return [result]
 
             except Exception as e:
-                if "Overhang 불일치" in str(e):
+                if "Overhang mismatch" in str(e):
                     raise e
-                raise RuntimeError(f"Assembly 시뮬레이션 실패: {e}")
+                raise RuntimeError(f"Assembly simulation failed: {e}")
 
     def validate(self, result: Dseqrecord) -> Dict:
         """결과물에 조립용 효소 사이트가 남아있지 않은지 검증.
@@ -778,8 +779,8 @@ class GoldenGateModule(AssemblyBase):
             sites = _find(name)
             if sites:
                 residual[name] = len(sites)
-                mark = " ← 조립에 사용한 효소" if name == self.enzyme_name else ""
-                warnings.append(f"{name} 사이트 {len(sites)}개 잔류{mark}")
+                mark = " <- the enzyme used for assembly" if name == self.enzyme_name else ""
+                warnings.append(f"{len(sites)} {name} site(s) remain{mark}")
 
         return {
             # 조립에 쓴 효소가 결과물에 남아있으면 재절단 위험 → invalid
@@ -788,7 +789,7 @@ class GoldenGateModule(AssemblyBase):
             'residual_sites': residual,
         }
 
-    def check_residual_sites(self, result: Dseqrecord, label: str = "조립 결과") -> Dict:
+    def check_residual_sites(self, result: Dseqrecord, label: str = "assembly result") -> Dict:
         """조립 산물에 효소 사이트가 남았는지 확인하고 **경고를 출력**한다(차단하지 않음).
 
         Golden Gate 산물은 인식서열이 제거되어 재절단되지 않는 것이 정상이다. 그런데
@@ -798,10 +799,10 @@ class GoldenGateModule(AssemblyBase):
         """
         v = self.validate(result)
         if v["residual_sites"]:
-            print(f"     ⚠️ {label}에 제한효소 사이트가 남아 있습니다: {v['residual_sites']}")
+            print(f"     [WARN] restriction sites remain in the {label}: {v['residual_sites']}")
             if not v["valid"]:
-                print(f"        조립에 쓴 {self.enzyme_name}가 재생성되었습니다 — "
-                      f"이 산물로 같은 효소를 다시 쓰면 잘립니다(접합부 우연 생성 가능).")
+                print(f"        the assembly enzyme {self.enzyme_name} was regenerated - "
+                      f"reusing it on this product would cut it (a junction can create one by chance).")
         return v
 
     # ============================================================================
@@ -837,7 +838,7 @@ class GoldenGateModule(AssemblyBase):
             return frags
         except Exception as e:
             # 에러 발생 시 빈 리스트 반환 (상위 extract_insert_fragment에서 처리됨)
-            print(f"     ⚠️  [{dseq.name}] 절단 시뮬레이션 예외 발생: {e}")
+            print(f"     [WARN] [{dseq.name}] digestion simulation raised: {e}")
             return []
 
     def _cut_with_bsai(self, dseq: Dseqrecord) -> List[Dseqrecord]:
@@ -856,7 +857,7 @@ class GoldenGateModule(AssemblyBase):
         """
         if vector is None:
             raise ValueError(
-                "circular 조립에는 vector가 필요합니다 — module이 들어갈 중간 벡터를 지정하세요."
+                "Circular assembly needs a vector - specify the intermediate vector the module goes into."
             )
         backbone = self._get_backbone(vector)
         sticky = [self.to_sticky(f) for f in fragments]
@@ -867,15 +868,15 @@ class GoldenGateModule(AssemblyBase):
                 acc = acc + frag
             except Exception as e:
                 raise RuntimeError(
-                    f"circular 조립 실패: {i + 1}번째 부품({frag.name})의 sticky end가 "
-                    f"직전 조각과 맞지 않습니다. overhang 배정을 확인하세요. ({e})"
+                    f"Circular assembly failed: the sticky end of part #{i + 1} ({frag.name}) does not "
+                    f"match the previous fragment. Check the overhang assignment. ({e})"
                 )
         try:
             result = acc.looped()
         except Exception as e:
             raise RuntimeError(
-                f"circular 조립 실패: 마지막 부품과 vector backbone이 닫히지 않습니다. "
-                f"벡터 overhang과 체인 양 끝 배정을 확인하세요. ({e})"
+                f"Circular assembly failed: the last part and the vector backbone do not close. "
+                f"Check the vector overhangs and the assignment at both chain ends. ({e})"
             )
         result.name = "assembled_module"
         result.description = f"Golden Gate circular assembly (vector={vector.name})"
@@ -892,8 +893,8 @@ class GoldenGateModule(AssemblyBase):
         frags = self._cut_with_enzyme(vector, self.enzyme)
         if not frags:
             raise ValueError(
-                f"vector '{vector.name}'를 {self.enzyme_name}로 자를 수 없어 circular 조립이 "
-                f"불가능합니다. {self.enzyme_name} 사이트를 가진 중간 벡터가 필요합니다."
+                f"Vector '{vector.name}' cannot be cut with {self.enzyme_name}, so circular assembly "
+                f"is not possible. An intermediate vector carrying {self.enzyme_name} sites is required."
             )
         return max(frags, key=len)
 
@@ -941,11 +942,11 @@ class GoldenGateModule(AssemblyBase):
         # (사이트가 겹치거나 말단에 너무 가까운 경우) 두 경우를 함께 안내한다.
         if not frags:
             raise ValueError(
-                f"vector '{vector.name}'를 {self.enzyme_name}로 자를 수 없어 Golden Gate 조립이 "
-                f"불가능합니다. {self.enzyme_name} 인식 서열이 없거나, 사이트가 겹치거나 말단에 "
-                f"너무 가까워 절단 시뮬레이션이 실패한 경우입니다"
-                f"(후자면 바로 위 '절단 시뮬레이션 예외' 로그를 확인하세요). "
-                f"→ {self.enzyme_name} 사이트를 가진 vector를 고르거나 다른 효소/조립 방식을 쓰세요."
+                f"Vector '{vector.name}' cannot be cut with {self.enzyme_name}, so Golden Gate "
+                f"assembly is not possible. Either there is no {self.enzyme_name} recognition "
+                f"site, or the sites overlap or sit too close to the ends for the digestion "
+                f"simulation (in that case see the 'digestion simulation raised' log just above). "
+                f"-> Choose a vector with {self.enzyme_name} sites, or another enzyme / method."
             )
 
         backbone = max(frags, key=len)
@@ -959,9 +960,9 @@ class GoldenGateModule(AssemblyBase):
         oh = self.overhang_len
         if len(full_seq) < 2 * oh:
             raise ValueError(
-                f"vector '{vector.name}'의 backbone이 {len(full_seq)}bp로 너무 짧아 "
-                f"{self.enzyme_name} overhang {oh}bp를 좌우로 구분해 추출할 수 없습니다 "
-                f"(최소 {2 * oh}bp 필요)."
+                f"The backbone of vector '{vector.name}' is only {len(full_seq)}bp, too short to "
+                f"extract left and right {self.enzyme_name} overhangs of {oh}bp separately "
+                f"(at least {2 * oh}bp needed)."
             )
 
         left, right = full_seq[:oh], full_seq[-oh:]
@@ -978,10 +979,10 @@ class GoldenGateModule(AssemblyBase):
         # 2개 50 / 3개 이상 29 → 실제로 GG 삽입에 쓸 수 있는 벡터는 79개(20%)뿐이다.
         if left == right:
             raise ValueError(
-                f"vector '{vector.name}'는 {self.enzyme_name} 절단 시 좌우 overhang이 "
-                f"모두 '{left}'로 같아 Golden Gate 삽입에 쓸 수 없습니다 "
-                f"(방향성 클로닝 불가 · 벡터 self-ligation). "
-                f"{self.enzyme_name} 사이트가 **2곳 이상**인 vector를 고르거나 Gibson을 쓰세요."
+                f"When vector '{vector.name}' is cut with {self.enzyme_name}, both overhangs come out "
+                f"as '{left}', so it cannot be used for Golden Gate insertion "
+                f"(no directional cloning; the vector self-ligates). "
+                f"Choose a vector with **two or more** {self.enzyme_name} sites, or use Gibson."
             )
         return left, right
 

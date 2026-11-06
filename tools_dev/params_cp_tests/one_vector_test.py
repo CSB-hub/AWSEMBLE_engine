@@ -1,7 +1,7 @@
 """V0001 하나로 module 2개를 만들면 말단이 서로 구분되는가 (multi-module 가능 여부)."""
 import sys, io, contextlib, shutil, glob
 from pathlib import Path
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
 from utils.io import DatabaseImport, DNAFileReader
 from workflow.builder import WorkflowBuilder
 from params import DesignParams as _DP
@@ -54,7 +54,7 @@ chk("A 말단이 벡터 서열 아님", a[:25] not in vs)
 chk("B 말단이 벡터 서열 아님", bq[:25] not in vs)
 
 print("\nPCR 전환 경고")
-chk("digest→PCR 안내 출력", "PCR(spacer 앵커)로 진행" in logA)
+chk("digest→PCR 안내 출력", "Proceeding by PCR (spacer anchors)" in logA)
 
 print("\n=== V0001 하나로 multi-module:", "가능" if ok else "불가", "===")
 sys.exit(0 if ok else 1)

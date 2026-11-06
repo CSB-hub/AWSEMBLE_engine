@@ -1,7 +1,7 @@
 """multi-module circular: 벡터 하나로 module N개, 인접 module이 spacer를 공유하는가."""
 import sys, io, contextlib, shutil, glob, json
 from pathlib import Path
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
 from utils.io import DatabaseImport, DNAFileReader
 from workflow.builder import WorkflowBuilder
 from params import DesignParams

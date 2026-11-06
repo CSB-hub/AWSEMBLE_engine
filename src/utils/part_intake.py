@@ -52,7 +52,7 @@ def find_part_by_sequence(db, sequence: str, part_type: Optional[str] = None) ->
     elif part_type in _PART_TABLES:
         tables = [part_type]
     else:
-        raise ValueError(f"알 수 없는 part_type: {part_type!r} (허용: {_PART_TABLES})")
+        raise ValueError(f"Unknown part_type: {part_type!r} (allowed: {_PART_TABLES})")
     for t in tables:
         rows = db._execute("Bioparts", f"SELECT ID FROM `{t}` WHERE Sequence = %s", (seq,))
         if rows:
@@ -80,9 +80,9 @@ def parts_from_sequences(
     n = len(sequences)
     # 병렬 리스트 길이 일치 검증 — 불일치 시 인덱싱 IndexError 대신 명확한 에러
     if types is not None and len(types) != n:
-        raise ValueError(f"types 길이({len(types)})가 sequences 개수({n})와 다릅니다.")
+        raise ValueError(f"len(types) ({len(types)}) differs from the number of sequences ({n}).")
     if names is not None and len(names) != n:
-        raise ValueError(f"names 길이({len(names)})가 sequences 개수({n})와 다릅니다.")
+        raise ValueError(f"len(names) ({len(names)}) differs from the number of sequences ({n}).")
 
     parts = []
     for i, seq in enumerate(sequences):
@@ -91,8 +91,8 @@ def parts_from_sequences(
         # 입력 레이어에서 먼저 걸어 유저에게 명확한 에러를 준다.
         if not validate_dna_sequence(s):
             raise ValueError(
-                f"부품 {i + 1} 서열이 유효하지 않습니다 "
-                f"(ATGC만 허용, 빈 서열·N·IUPAC 불가): {seq!r}"
+                f"The sequence of part {i + 1} is not valid "
+                f"(ATGC only; empty, N or IUPAC not allowed): {seq!r}"
             )
         name = names[i] if names else f"user_part_{i + 1}"
         rec = Dseqrecord(s, name=name)
@@ -125,8 +125,8 @@ def parts_from_genbank(gbk_path, db=None) -> List[Dict]:
     #       여러 개면 조용히 유실되지 않도록 경고한다(부품이 흩어져 있으면 분리 처리 필요).
     records = DNAFileReader.read_genbank(str(gbk_path))
     if len(records) > 1:
-        print(f"⚠️ gbk에 레코드 {len(records)}개 발견 — 첫 번째만 처리합니다 "
-              f"(나머지 {len(records) - 1}개 무시).")
+        print(f"The gbk file has {len(records)} records - only the first is processed "
+              f"({len(records) - 1} ignored).")
     rec = records[0]
 
     # fix8: 부품 이름 유니크화 — 무명/동일 부품이 겹치면 build_plasmid registry(name 키)에서

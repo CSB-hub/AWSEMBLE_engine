@@ -1,5 +1,5 @@
 import sys, io, contextlib, hashlib
-sys.path.insert(0, "/home/csb/Desktop/BioCAD/Awsemble/awsemble_dev/BioCAD_private/awsemble/src")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[2] / "src"))
 from pydna.dseqrecord import Dseqrecord
 from assembly.golden_gate import GoldenGateModule
 from basic.primer_design import PrimerDesign
