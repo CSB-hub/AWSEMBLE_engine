@@ -228,12 +228,12 @@ tight = DesignParams(tm_min=min(80.0, _tm + 4), tm_max=min(80.0, _tm + 9))
 # 설명으로 "Tm"을 언급할 수 있다(GC 경고문의 "(Tm은 별도 판정)"에 2026-11-05 실제로 걸렸다).
 def tm_msgs(p):
     v = ValidatePrimer().validate_primer(pr, params=p)
-    return [m for m in v["violations"] + v["warnings"] if "Tm이" in m]
+    return [m for m in v["violations"] + v["warnings"] if "Tm is" in m]
 check(not tm_msgs(wide), "선언창 안이면 지적 없음",
       f"Tm {_tm:.1f}℃ / 창 {wide.tm_min:g}~{wide.tm_max:g}")
 check(bool(tm_msgs(tight)), "창을 올리면 같은 프라이머가 지적된다",
       f"Tm {_tm:.1f}℃ / 창 {tight.tm_min:g}~{tight.tm_max:g}")
-check("설정한" in (tm_msgs(tight) or [""])[0],
+check("you set" in (tm_msgs(tight) or [""])[0],
       "메시지가 '설정한 기준'임을 밝힌다", (tm_msgs(tight) or [""])[0][:58])
 
 print("\n[8] 두 번째 창이 아예 없다 (어긋남이 구조적으로 불가능)")

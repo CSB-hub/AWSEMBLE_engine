@@ -126,7 +126,7 @@ _gc = ValidatePrimer().validate_primer(PR, params=prm)["gc_content"] * 100
 # Tm 축 — 창을 프라이머 Tm 위로 올리면 지적이 생긴다
 hot = DesignParams(tm_min=min(TM_INPUT_MAX, _tm + 4), tm_max=TM_INPUT_MAX)
 check(not msgs(prm, "Tm이"), "Tm: 기본창 안이면 조용하다", f"Tm {_tm:.1f}℃")
-check(bool(msgs(hot, "Tm이")), "Tm: 창을 올리면 지적된다",
+check(bool(msgs(hot, "Tm is")), "Tm: 창을 올리면 지적된다",
       f"창 {hot.tm_min:g}~{hot.tm_max:g}")
 
 # GC 축 — 선언창을 프라이머 GC 위로 좁히면 지적이 생긴다
@@ -137,12 +137,12 @@ check(bool(msgs(gc_narrow, "GC%")), "GC: 창을 좁히면 지적된다",
 
 # 길이 축 — 선언창을 좁히면 지적이 생긴다 (리터럴 30이 아니라 설정값을 쓴다)
 len_narrow = DesignParams(primer_len_min=18, primer_len_opt=20, primer_len_max=25)
-_lm = msgs(len_narrow, "길이 상한", primer=PR_LONG)
+_lm = msgs(len_narrow, "length ceiling", primer=PR_LONG)
 check(bool(_lm), f"길이: 상한 25로 좁히면 {len(PR_LONG)}nt가 지적된다",
       (_lm or [""])[0][:58])
 check("25 bp" in (_lm or [""])[0],
       "메시지 숫자가 **설정값**이다 (리터럴 30이 아니다)", (_lm or [""])[0][-28:])
-check(not msgs(DesignParams(primer_len_max=30), "길이 상한", primer=PR_LONG),
+check(not msgs(DesignParams(primer_len_max=30), "length ceiling", primer=PR_LONG),
       "상한 30이면 같은 프라이머가 조용하다 (기준이 설정을 따라 움직인다)")
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -156,7 +156,7 @@ for bad, why in ((dict(tm_min=34.9, tm_max=60.0), "하한이 35℃ 아래"),
         DesignParams(**bad).validate()
         check(False, f"{why} → 에러가 나야 함")
     except ValueError as e:
-        check("입력 허용 범위" in str(e), f"{why}: 막힌다",
+        check("allowed" in str(e), f"{why}: 막힌다",
               str(e).splitlines()[-1][:58])
 # 경계값은 통과해야 한다 (off-by-one으로 정상 입력을 막으면 안 된다)
 try:
@@ -172,8 +172,8 @@ print("\n[4] 길이 판정이 tail_len으로 갈린다")
 TAIL = "GGTCTCAAATG"          # 11nt (인식서열+spacer+overhang 모사)
 LONG_ANNEAL = "ATGGCGGATAAAGAACTTAAATTGGCATGCGGATCCAACA"   # 40nt
 tight_len = DesignParams(primer_len_min=18, primer_len_opt=20, primer_len_max=25)
-with_tail = msgs(tight_len, "길이", primer=TAIL + LONG_ANNEAL, tail_len=len(TAIL))
-no_tail = msgs(tight_len, "길이", primer=LONG_ANNEAL, tail_len=0)
+with_tail = msgs(tight_len, "length", primer=TAIL + LONG_ANNEAL, tail_len=len(TAIL))
+no_tail = msgs(tight_len, "length", primer=LONG_ANNEAL, tail_len=0)
 check(not with_tail, "tail 있으면 선언창 상한으로 지적하지 않는다",
       str([m[:40] for m in with_tail] or "지적 없음"))
 check(bool(no_tail), "tail 없으면 같은 40nt가 선언창 상한으로 지적된다",
@@ -184,17 +184,17 @@ check(PRIMER_ORDER_MAX_NT == 80, "주문 상한 80nt", str(PRIMER_ORDER_MAX_NT))
 over = ValidatePrimer().validate_primer(
     TAIL + "A" * (PRIMER_ORDER_MAX_NT + 5 - len(TAIL)),
     params=prm, tail_len=len(TAIL))
-check(any("합성 상한" in m for m in over["violations"] + over["warnings"]),
+check(any("synthesis limit" in m for m in over["violations"] + over["warnings"]),
       f"전체 {PRIMER_ORDER_MAX_NT + 5}nt는 주문 상한으로 지적된다")
 short = ValidatePrimer().validate_primer(TAIL + "ATGCGGATCCAAC",  # 결합부 13nt
                                          params=prm, tail_len=len(TAIL))
-_sm = [m for m in short["warnings"] if "특이성 하한" in m]
+_sm = [m for m in short["warnings"] if "specificity floor" in m]
 check(bool(_sm), f"결합부 13nt < amp_min {prm.amp_min}은 지적된다", (_sm or [""])[0][:56])
-check("tail에 흡수" in (_sm or [""])[0],
+check("absorbed into the tail" in (_sm or [""])[0],
       "사유가 적혀 있다 (짧은 부품이라 결합부가 tail에 흡수됨)")
 ok_tail = ValidatePrimer().validate_primer(TAIL + LONG_ANNEAL,
                                            params=prm, tail_len=len(TAIL))
-check(not any("합성 상한" in m or "특이성 하한" in m
+check(not any("synthesis limit" in m or "specificity floor" in m
               for m in ok_tail["violations"] + ok_tail["warnings"]),
       "제약 안쪽이면 길이 지적이 없다 (상시 경고 제거)")
 
@@ -205,8 +205,8 @@ check(prm.pair_tm_diff_max == 5.0, "pair_tm_diff_max 기본 5℃",
 check(check_pair_tm_diff(62.0, 60.0, prm) is None, "창 안(2.0℃)이면 None")
 w = check_pair_tm_diff(71.1, 59.4, DesignParams.from_preset("phusion"))
 check(w is not None, "창 밖(11.7℃)이면 경고")
-check("11.7" in w and "5℃" in w, "실측값과 설정값이 둘 다 적혀 있다", (w or "")[:56])
-check("annealing 온도" in w and "낮은 쪽" in w,
+check("11.7" in w and "5" in w, "실측값과 설정값이 둘 다 적혀 있다", (w or "")[:56])
+check("annealing temperature" in w and "lower one" in w,
       "Ta 근거가 적혀 있다 (왜 문제인지 알 수 있다)")
 check("forward" in w, "어느 쪽이 뜨거운지 적혀 있다")
 # `tm_diff_max`와 **다른 축**이라는 걸 고정한다 — 이름이 비슷해 합쳐지기 쉽다.
@@ -283,9 +283,9 @@ for preset in ("taq", "phusion", "q5"):
     # 반대로 **남아야 하는** 경고도 확인한다 — 소음을 지우면서 신호까지 지우면
     # 더 나쁘다. BBa_B0032는 짧아서 결합부가 tail에 흡수돼 13nt가 되고, 그건
     # `amp_min`(유저 설정값) 미달이라 알려야 한다.
-    check("특이성 하한" in allw,
+    check("specificity floor" in allw,
           f"{preset}: amp_min 미달 경고는 남아 있다 (신호를 지운 게 아니다)",
-          next((x[:52] for x in allw.split(" | ") if "특이성 하한" in x), "없음"))
+          next((x[:52] for x in allw.split(" | ") if "specificity floor" in x), "없음"))
     n_warn = sum(len([x for x in (r.get("warnings") or "").split(" | ") if x.strip()])
                  for r in rows)
     print(f"     {preset}: 프라이머 {len(rows)}행 · 경고 {n_warn}건 "

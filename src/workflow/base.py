@@ -137,12 +137,12 @@ class WorkflowBase:
 
             stage = getattr(self, op, None)
             if stage is None or not callable(stage):
-                raise ValueError(f"알 수 없는 stage op: {op}")
+                raise ValueError(f"Unknown stage op: {op}")
 
             records = [registry.get(i) for i in input_ids]
             if None in records:
                 missing = input_ids[records.index(None)]
-                raise KeyError(f"build plan 입력 artifact를 찾을 수 없습니다: {missing}")
+                raise KeyError(f"Build plan input artifact not found: {missing}")
 
             out = stage(records, method=method, assembly_type=assembly_type,
                         manifest=manifest, design_params=design_params)
@@ -205,7 +205,7 @@ class WorkflowBase:
                 file_path = output_path / f"{filename}.fasta"
                 DNAFileWriter.write_fasta([seq], file_path)
             else:
-                raise ValueError(f"지원하지 않는 형식: {format}. 'genbank' 또는 'fasta'만 가능합니다.")
+                raise ValueError(f"Unsupported format: {format}. Only 'genbank' or 'fasta' is allowed.")
 
             saved_paths.append(file_path)
 
@@ -222,10 +222,10 @@ class WorkflowBase:
             Markdown 형식의 리포트 문자열
         """
         manifest_path = self.project_dir / "reports" / Manifest.FILENAME
-        lines = ["# Workflow 실행 결과 리포트\n", f"\n- 프로젝트: `{self.project_dir}`\n"]
+        lines = ["# Workflow run report\n", f"\n- Project: `{self.project_dir}`\n"]
 
         if not manifest_path.exists():
-            lines.append("\n(manifest.json 없음 — 실행/기록된 stage가 없습니다.)\n")
+            lines.append("\n(No manifest.json - no stage was run or recorded.)\n")
             return "".join(lines)
 
         with open(manifest_path, encoding="utf-8") as f:
@@ -236,12 +236,12 @@ class WorkflowBase:
         for a in artifacts:
             by_op[a["op"]] = by_op.get(a["op"], 0) + 1
 
-        lines.append("\n## 요약\n")
-        lines.append(f"- 총 artifact: {len(artifacts)}개\n")
+        lines.append("\n## Summary\n")
+        lines.append(f"- Artifacts: {len(artifacts)}\n")
         for op, n in by_op.items():
-            lines.append(f"- {op}: {n}개\n")
+            lines.append(f"- {op}: {n}\n")
 
-        lines.append("\n## Artifact 계보\n")
+        lines.append("\n## Artifact lineage\n")
         lines.append("| id | level | method | inputs | file |\n")
         lines.append("|---|---|---|---|---|\n")
         for a in artifacts:
@@ -441,7 +441,7 @@ class WorkflowBase:
                 "metric": "ΔG(kcal/mol)",
                 "value": round(h["delta_g"], 2) if isinstance(
                     h.get("delta_g"), (int, float)) else "",
-                "verdict": "차단" if h.get("blocking") else "기록",
+                "verdict": "BLOCKED" if h.get("blocking") else "noted",
                 "detail": h.get("detail", ""),
             })
         for item in (crosstalk_pairs or []):
@@ -450,14 +450,14 @@ class WorkflowBase:
                 "scope": item[4] if len(item) > 4 else "",
                 "kind": "junction_crosstalk",
                 "a": a, "b": b,
-                "metric": f"공유 연속서열(bp, {orient})",
+                "metric": f"shared run (bp, {orient})",
                 "value": shared,
                 # yeast는 `YeastHRCloning._check_plan`이 하드 차단으로 올리므로
                 # 여기까지 오면 Gibson 트랙이다(시험관이라 산물을 확인할 수 있다).
-                "verdict": "경고",
-                "detail": "비인접 fragment가 서열을 공유합니다 — 의도하지 않은 자리끼리 "
-                          "재조합할 수 있습니다. 같은 부품을 두 자리에 쓰고 있는지 "
-                          "확인하세요.",
+                "verdict": "warning",
+                "detail": "Non-adjacent fragments share sequence - unintended positions "
+                          "may recombine. Check whether the same part is used in two "
+                          "places.",
             })
         # ── 요약 행 — 검사마다 한 줄, 걸린 쌍이 0이어도 쓴다 ──────────────────
         from params import DEFAULT_PARAMS
@@ -465,14 +465,15 @@ class WorkflowBase:
         _p = params or DEFAULT_PARAMS
         _why = {
             "primer_dimer": (
-                f"같은 튜브에 들어가는 프라이머의 **결합부끼리** 전수 비교했습니다 "
-                f"(기록 기준 ΔG ≤ {_p.qc_dimer_dg:g}, 차단 기준 ≤ "
-                f"{_p.qc_dg_absolute:g} kcal/mol). 5' tail은 모든 프라이머가 공유하므로 "
-                f"제외합니다."),
+                f"Every pair of primer annealing regions sharing a tube was compared "
+                f"(noted at dG <= {_p.qc_dimer_dg:g}, blocked at <= "
+                f"{_p.qc_dg_absolute:g} kcal/mol). The 5' tail is excluded because every "
+                f"primer shares it."),
             "junction_crosstalk": (
-                f"**인접하지 않은** fragment끼리 공유하는 최장 연속서열을 "
-                f"정방향·역상보 양쪽으로 비교했습니다 (임계 {JUNCTION_UNIQUE_MAX_BP}bp). "
-                f"인접 쌍은 공유가 설계 의도라 제외합니다."),
+                f"The longest run shared between **non-adjacent** fragments was compared "
+                f"in both forward and reverse-complement orientation (threshold "
+                f"{JUNCTION_UNIQUE_MAX_BP}bp). Adjacent pairs are excluded because sharing "
+                f"is the design intent there."),
         }
         summary = []
         for scope, kind, n_pairs in (scans or []):
@@ -481,10 +482,10 @@ class WorkflowBase:
             summary.append({
                 "scope": scope,
                 "kind": f"{kind}_summary",
-                "a": "(전수)", "b": "",
-                "metric": "검사한 쌍",
+                "a": "(all pairs)", "b": "",
+                "metric": "pairs checked",
                 "value": n_pairs,
-                "verdict": "통과" if n_hit == 0 else f"{n_hit}쌍 확인 필요",
+                "verdict": "clean" if n_hit == 0 else f"{n_hit} pairs need review",
                 "detail": _why.get(kind, ""),
             })
         rows = summary + rows
@@ -523,38 +524,38 @@ class WorkflowBase:
         _NEB_RMSE = {"taq": "0.29", "phusion": "0.62", "q5": "0.35"}
 
         lines = [
-            "# 이 설계에 쓰인 조건",
+            "# Conditions used for this design",
             "",
-            "## Tm 계산 — NEB Tm Calculator 재현",
+            "## Tm calculation - reproducing the NEB Tm Calculator",
             "",
-            "| 항목 | 값 |",
+            "| Item | Value |",
             "|---|---|",
             "| 방식 | Nearest-Neighbor (SantaLucia 1998 / Biopython `Tm_NN`, `DNA_NN3`) |",
         ]
         if prm is not None:
             lines += [
-                f"| 재현 대상 | {_poly or '(사용자 조성 — NEB 프리셋과 다릅니다)'} |",
-                f"| 1가 염 (환산) | {_mono:g} mM = Na⁺ {prm.na_mM:g} + K⁺ {prm.k_mM:g}"
+                f"| Reproducing | {_poly or '(custom buffer - not an NEB preset)'} |",
+                f"| Monovalent salt (converted) | {_mono:g} mM = Na+ {prm.na_mM:g} + K+ {prm.k_mM:g}"
                 f" + Tris {prm.tris_mM:g}/2 |",
                 f"| Mg²⁺ / dNTP | {prm.mg_mM:g} mM / {prm.dntp_mM:g} mM |",
-                f"| 프라이머 농도 | {prm.primer_conc_nM:g} nM |",
-                f"| 염 보정 | saltcorr={prm.tm_saltcorr}"
-                f" ({'Schildkraut — NEB가 Phusion에만 쓰는 보정' if prm.tm_saltcorr == 1 else 'Owczarzy 2008'}) |",
+                f"| Primer concentration | {prm.primer_conc_nM:g} nM |",
+                f"| Salt correction | saltcorr={prm.tm_saltcorr}"
+                f" ({'Schildkraut - NEB applies this to Phusion only' if prm.tm_saltcorr == 1 else 'Owczarzy 2008'}) |",
             ]
             if _poly in _NEB_RMSE:
-                lines.append(f"| NEB 공개값과의 오차 | RMSE {_NEB_RMSE[_poly]}℃"
-                             f" (18~36nt 프라이머로 검증) |")
+                lines.append(f"| Error vs the published NEB values | RMSE {_NEB_RMSE[_poly]}C"
+                             f" (checked on 18-36nt primers) |")
         else:
             lines += [
-                f"| Na⁺ 농도 | {na} mM |" if na is not None else "| Na⁺ 농도 | (미기록) |",
-                f"| 프라이머 농도 | {conc} nM |" if conc is not None
-                else "| 프라이머 농도 | (미기록) |",
+                f"| Na+ concentration | {na} mM |" if na is not None else "| Na+ concentration | (not recorded) |",
+                f"| Primer concentration | {conc} nM |" if conc is not None
+                else "| Primer concentration | (not recorded) |",
             ]
         lines += [
             "",
-            "> 이 조건은 **NEB Tm Calculator와 같은 값**이 나오도록 맞춰져 있습니다.",
-            "> NEB 버퍼의 1가 염은 Na⁺가 아니라 K⁺/Tris이므로 Na⁺는 0입니다"
-            " — 염이 없는 것이 아니라 위 표의 환산값이 실제 기준입니다.",
+            "> These conditions are tuned to give **the same values as the NEB Tm Calculator**.",
+            "> The monovalent salt in NEB buffers is K+/Tris rather than Na+, so Na+ is 0"
+            " - there is salt; the converted value in the table above is what applies.",
             "",
         ]
 
@@ -568,27 +569,27 @@ class WorkflowBase:
             _rule = ("0.93 × min(Tm) + 7.5" if _kind == "phusion"
                      else f"min(Tm) {'+' if _off >= 0 else '−'} {abs(_off):g}")
             lines += [
-                "## 권장 annealing 온도 (`primers.csv`의 `ta` 컬럼)",
+                "## Recommended annealing temperature (the `ta` column in `primers.csv`)",
                 "",
-                "| 효소 | 규칙 | 상한 |",
+                "| Enzyme | Rule | Cap |",
                 "|---|---|---|",
                 f"| {_poly} | {_rule} | {_cap:g}℃ |",
                 "",
-                "> `min(Tm)`은 fwd·rev의 **결합부(anneal) Tm 중 낮은 쪽**입니다"
-                " — 먼저 떨어지는 쪽이 PCR을 결정합니다.",
-                "> NEB의 공개 Ta 규칙을 그대로 옮긴 값이라 NEB 사이트에서 확인하셔도 같습니다.",
+                "> `min(Tm)` is the **lower of the fwd/rev annealing Tm values**"
+                " - whichever lets go first decides the PCR.",
+                "> These are NEB's published Ta rules verbatim, so the NEB site gives the same answer.",
                 "",
             ]
 
         lines += [
-            "## primers.csv의 Tm 두 종류",
+            "## The two kinds of Tm in primers.csv",
             "",
-            "조립용 프라이머는 `[5' 꼬리][주형 결합부]` 구조라 두 값이 크게 다릅니다.",
+            "An assembly primer is `[5' tail][template-binding region]`, so the two values differ a lot.",
             "",
-            "| 컬럼 | 의미 |",
+            "| Column | Meaning |",
             "|---|---|",
-            "| `fwd_tm` / `rev_tm` | **결합부(anneal)** 기준 — 꼬리 제외. 낮게 나오는 것이 정상 |",
-            "| `fwd_tm_full` / `rev_tm_full` | **주문할 프라이머 전체** 기준 — 꼬리 포함 |",
+            "| `fwd_tm` / `rev_tm` | the **annealing region** only - tail excluded. A low value is normal |",
+            "| `fwd_tm_full` / `rev_tm_full` | the **whole primer you order** - tail included |",
             "",
         ]
 
@@ -597,42 +598,44 @@ class WorkflowBase:
         # 설명할 것은 등급 2층의 뜻이 아니라 **어떤 범위가 쓰였는가**다.
         if prm is not None:
             lines += [
-                "## 경고 기준 — 설정하신 범위 하나입니다",
+                "## Warning criteria - the single window you set",
                 "",
-                "프라이머 경고는 **아래 범위를 벗어났을 때만** 붙습니다. 예전에는 설정값"
-                " 바깥에 내부 판정 기준이 따로 있어서(Tm 45~85℃ · GC 이상구간 40~60%"
-                " · 결합부 길이 15~30nt 고정) 설정하지 않은 기준으로도 경고가 떴습니다.",
+                "A primer warning appears **only when a value falls outside the window below**."
+                " Previously there was a second internal judgment window outside your settings"
+                " (Tm 45-85C, GC ideal band 40-60%, annealing length fixed at 15-30nt), so"
+                " warnings could come from criteria you never set.",
                 "",
-                "| 축 | 설정값 | 비교 대상 |",
+                "| Axis | Your setting | Compared against |",
                 "|---|---|---|",
-                f"| Tm | {prm.tm_min:g} ~ {prm.tm_max:g} ℃ | 결합부(anneal) Tm |",
-                f"| 결합부 길이 | {prm.primer_len_min} ~ {prm.primer_len_max} nt | "
-                f"결합부 길이(꼬리 제외) |",
-                f"| GC | {prm.gc_min:g} ~ {prm.gc_max:g} % | 결합부 GC% |",
-                f"| fwd·rev Tm 차이 | {prm.pair_tm_diff_max:g} ℃ 이하 | "
-                f"`tm_diff` 컬럼 |",
+                f"| Tm | {prm.tm_min:g} - {prm.tm_max:g} C | annealing Tm |",
+                f"| Annealing length | {prm.primer_len_min} - {prm.primer_len_max} nt | "
+                f"annealing length (tail excluded) |",
+                f"| GC | {prm.gc_min:g} - {prm.gc_max:g} % | annealing-region GC% |",
+                f"| fwd/rev Tm difference | {prm.pair_tm_diff_max:g} C or less | "
+                f"the `tm_diff` column |",
                 "",
-                "> 결합부 GC%는 **주형의 성질**이라 프라이머를 늘려도 거의 바뀌지 않습니다"
-                " (늘리면 Tm은 올라갑니다). GC 경고가 뜨면 프라이머를 고치는 것보다"
-                " Tm이 충분한지를 함께 보고 판단하시는 편이 맞습니다.",
+                "> The annealing-region GC% is **a property of the template**, so extending the"
+                " primer barely changes it (it does raise the Tm). When a GC warning appears,"
+                " judge it together with whether the Tm is sufficient rather than reworking"
+                " the primer.",
                 "",
-                "> 위 범위와 무관하게 **항상** 알리는 것이 두 가지 있습니다 —"
-                " hairpin과 dimer입니다. 범위 문제가 아니라 ΔG 하나로 PCR이 걸리지 않는"
-                " 신호라, 설정값 안에 있어도 그대로 알립니다.",
+                "> Two things are reported **regardless** of the window above: hairpin and dimer."
+                " They are not a matter of range - dG alone says the PCR will not run - so"
+                " they are reported even when every value sits inside your settings.",
                 "",
-                "## primers.csv의 `tm_diff`와 `ta`는 같이 보셔야 합니다",
+                "## Read `tm_diff` and `ta` in primers.csv together",
                 "",
-                f"권장 annealing 온도(`ta`)는 **낮은 쪽 Tm 기준**으로 정해집니다."
-                f" 그래서 `tm_diff`가 크면 그 Ta에서 **뜨거운 쪽 프라이머가 자기 Tm보다"
-                f" 훨씬 낮은 온도에서** 돌아 비특이 결합이 늘어납니다."
-                f" 설정하신 상한은 {prm.pair_tm_diff_max:g}℃입니다.",
+                f"The recommended annealing temperature (`ta`) is set from the **lower Tm**."
+                f" So when `tm_diff` is large, at that Ta the **hotter primer runs well below"
+                f" its own Tm** and non-specific binding increases."
+                f" The limit you set is {prm.pair_tm_diff_max:g}C.",
                 "",
             ]
 
         lines += [
-            "## 조립",
+            "## Assembly",
             "",
-            f"| 사용 제한효소 | {', '.join(enzymes) if enzymes else '(없음)'} |",
+            f"| Restriction enzymes used | {', '.join(enzymes) if enzymes else '(none)'} |",
             "|---|---|",
             "",
         ]
@@ -643,12 +646,12 @@ class WorkflowBase:
             try:
                 warns = prm.validate()
             except ValueError as e:      # 방어적 — 진입부에서 이미 걸렀어야 한다
-                warns = [f"(검증 실패) {e}"]
+                warns = [f"(validation failed) {e}"]
             if warns:
                 lines += [
-                    "## 설계 파라미터 경고",
+                    "## Design parameter warnings",
                     "",
-                    "> 아래는 **차단이 아니라 참고**입니다. 권장 범위를 벗어난 값으로 설계했다는 뜻입니다.",
+                    "> These are **notes, not blocks** - the design used values outside the recommended range.",
                     "",
                 ] + [f"- {w}" for w in warns] + [""]
         out = self.project_dir / "reports" / "design_conditions.md"
@@ -673,7 +676,7 @@ class WorkflowBase:
             >>> result = workflow.get_result("step1")
         """
         if step_name not in self.results:
-            raise KeyError(f"단계 '{step_name}'의 결과가 없습니다")
+            raise KeyError(f"No result for step '{step_name}'")
         return self.results[step_name]
 
     def save_report(self, output_file: str = "run_report.md") -> Path:
@@ -738,10 +741,10 @@ class WorkflowBase:
 
         # 검증
         if validate:
-            print("검증 중...")
+            print("Validating...")
             validation = assembler.validate(insert)
             if not validation['valid']:
-                print("⚠️ 검증 경고:")
+                print("Validation warnings:")
                 for warning in validation.get('warnings', []):
                     print(f"  - {warning}")
                 for error in validation.get('errors', []):
@@ -765,31 +768,31 @@ class WorkflowBase:
             from workflow.vector_homology_spacer import module_carries_homology
             _lin = assembler._linearize_vector(vector)
             if module_carries_homology(insert, _lin, assembler.overlap_length):
-                print("Vector homology가 module에 이미 있습니다 — 삽입 PCR 생략")
-                print(f"  선형화된 Vector: {len(_lin.seq)} bp / insert: {len(insert.seq)} bp\n")
-                print(f"{label} 조립 수행 중...")
+                print("The module already carries vector homology - skipping the insertion PCR")
+                print(f"  Linearized vector: {len(_lin.seq)} bp / insert: {len(insert.seq)} bp\n")
+                print(f"Assembling {label}...")
                 return assembler.assemble([_lin, insert], assembly_type="circular")
 
-            print("프라이머 설계 중...")
+            print("Designing primers...")
             fwd, rev = assembler.prepare_fragments(insert, vector)
             print(f"  Forward: {fwd[:30]}..." if len(fwd) > 30 else f"  Forward: {fwd}")
             print(f"  Reverse: {rev[:30]}..." if len(rev) > 30 else f"  Reverse: {rev}")
             print()
 
             # PCR 시뮬레이션
-            print("PCR 시뮬레이션 중...")
+            print("Simulating PCR...")
             pcr_product = assembler.amplify_insert(insert, fwd, rev)
-            print(f"  PCR 산물: {len(pcr_product.seq)} bp")
+            print(f"  PCR product: {len(pcr_product.seq)} bp")
             print()
 
             # Vector 선형화
-            print("Vector 선형화 중...")
+            print("Linearizing the vector...")
             linear_vector = assembler._linearize_vector(vector)
-            print(f"  선형화된 Vector: {len(linear_vector.seq)} bp")
+            print(f"  Linearized vector: {len(linear_vector.seq)} bp")
             print()
 
             # homology 조립 (Gibson / yeast HR)
-            print(f"{label} 조립 수행 중...")
+            print(f"Assembling {label}...")
             results = assembler.assemble([linear_vector, pcr_product], assembly_type="circular")
         elif method.lower() == "golden_gate":
             # Golden Gate vector insertion (P5): vector를 조립 효소로 잘라 backbone을 얻고,
@@ -807,7 +810,7 @@ class WorkflowBase:
 
             gg_enz = assembler.enzyme            # Biopython 효소 객체
             gg_name = assembler.enzyme_name      # 프라이머 설계용 이름
-            print(f"Golden Gate vector insertion... (효소: {gg_name})")
+            print(f"Golden Gate vector insertion... (enzyme: {gg_name})")
 
             # 1. insert에서 target CDS 좌표 (Gibson과 동일한 feature 자동감지 재사용)
             gibson_helper = AssemblyFactory.create_assembler("gibson")
@@ -841,10 +844,10 @@ class WorkflowBase:
             results = [self._ligate_circular(backbone, insert_fragment)]
         else:
             # 기타 조립 방법 (향후 추가)
-            print("조립 시뮬레이션 중...")
+            print("Simulating assembly...")
             results = assembler.assemble([vector, insert], assembly_type="circular")
 
-        print(f"✅ {len(results)}개 construct 생성\n")
+        print(f"{len(results)} constructs produced\n")
         return results
 
     def _ligate_circular(self, backbone: Dseqrecord, insert_fragment: Dseqrecord) -> Dseqrecord:
@@ -875,7 +878,7 @@ class WorkflowBase:
             except Exception:
                 continue
         raise RuntimeError(
-            "Golden Gate circular ligation 실패: backbone-insert sticky-end가 호환되지 않습니다."
+            "Golden Gate circular ligation failed: the backbone and insert sticky ends are not compatible."
         )
 
     def vector_insertion(
@@ -934,7 +937,7 @@ class WorkflowBase:
             else:
                 construct.features.insert(0, SeqFeature(FeatureLocation(0, n, strand=1), type="source"))
         except Exception as e:
-            print(f"  ⚠️  insert feature 기입 생략: {e}")
+            print(f"  Skipped writing insert features: {e}")
 
         if vi_id is None:
             # 설계 파라미터가 해시 재료에 없으면 다른 조건으로 만든 construct가 같은 id를 갖는다.

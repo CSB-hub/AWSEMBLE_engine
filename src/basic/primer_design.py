@@ -71,21 +71,21 @@ def _explain_shortfall_axis(tm_fwd: float, tm_rev: float,
     f_out = tm_fwd < lo or tm_fwd > hi
     r_out = tm_rev < lo or tm_rev > hi
     if f_out and r_out:
-        side = "양쪽 모두"
+        side = "Both primers"
     elif r_out:
-        side = "reverse 쪽이"
+        side = "The reverse primer"
     elif f_out:
-        side = "forward 쪽이"
+        side = "The forward primer"
     else:
         return ""
     outs = [t for t, o in ((tm_fwd, f_out), (tm_rev, r_out)) if o]
     if all(t < lo for t in outs):
-        why = "Tm이 요청 범위보다 낮습니다(결합부가 짧아서)"
+        why = "Tm is below the requested window (the annealing region is too short)"
     elif all(t > hi for t in outs):
-        why = "Tm이 요청 범위보다 높습니다(결합부가 길어서)"
+        why = "Tm is above the requested window (the annealing region is too long)"
     else:
-        why = "한쪽은 낮고 한쪽은 높아 한 창에 같이 넣을 수 없습니다"
-    return f"{side} 범위를 못 맞췄습니다 — {why}."
+        why = "one is below and the other above, so they cannot share one window"
+    return f"{side} could not meet the window - {why}."
 
 
 def _length_hint(settings: Dict, prm, lo: float, hi: float) -> str:
@@ -150,15 +150,15 @@ def _length_hint(settings: Dict, prm, lo: float, hi: float) -> str:
     lmax = first_feasible(list(range(hi0 + 1, PRIMER3_MAX_SIZE + 1)),
                           lambda v: (lo0, v))
     if lmax is not None:
-        return (f"결합부 길이(Annealing length) **상한을 {hi0} → {lmax}** 로 올리면 "
-                f"요청 범위를 맞출 수 있습니다.")
+        return (f"Raising the annealing length **upper bound from {hi0} to {lmax}** would "
+                f"meet the requested window.")
     lmin = first_feasible(list(range(lo0 - 1, _FLOOR - 1, -1)),
                           lambda v: (v, hi0))
     if lmin is not None:
-        return (f"결합부 길이(Annealing length) **하한을 {lo0} → {lmin}** 로 내리면 "
-                f"요청 범위를 맞출 수 있습니다(낮은 Tm은 짧게 가야 합니다).")
-    return (f"결합부 길이를 {_FLOOR}~{PRIMER3_MAX_SIZE}nt 어디로 바꿔도 이 서열에서는 "
-            f"요청 Tm에 닿지 않습니다 — Tm 범위를 조정해 주세요.")
+        return (f"Lowering the annealing length **lower bound from {lo0} to {lmin}** would "
+                f"meet the requested window (a low Tm needs a short region).")
+    return (f"No annealing length between {_FLOOR} and {PRIMER3_MAX_SIZE}nt reaches the "
+            f"requested Tm on this sequence - adjust the Tm window.")
 
 
 def check_pair_tm_diff(fwd_tm, rev_tm, params=None):
@@ -190,13 +190,13 @@ def check_pair_tm_diff(fwd_tm, rev_tm, params=None):
         return None
     _ta = _p.ta_recommended(fwd_tm, rev_tm)
     _hot = "forward" if fwd_tm > rev_tm else "reverse"
-    _msg = (f"fwd·rev Tm 차이가 설정한 상한보다 큽니다 "
+    _msg = (f"The fwd/rev Tm difference exceeds the limit you set "
             f"({diff:.1f}℃ > {_p.pair_tm_diff_max:g}℃ — "
             f"fwd {fwd_tm:.1f}℃ / rev {rev_tm:.1f}℃)")
     if _ta is not None:
-        _msg += (f" — annealing 온도는 낮은 쪽 기준 {_ta:.1f}℃로 정해지므로 "
-                 f"{_hot} 프라이머가 자기 Tm보다 낮은 온도에서 돌아 "
-                 f"비특이 결합이 늘 수 있습니다")
+        _msg += (f" - the annealing temperature is set from the lower one ({_ta:.1f}C), so the "
+                 f"{_hot} primer runs below its own Tm and non-specific binding "
+                 f"may increase")
     return _msg
 
 
@@ -352,7 +352,7 @@ class PrimerDesign:
         """
     
         if not template:
-            raise ValueError("Template 서열이 비어있습니다")
+            raise ValueError("The template sequence is empty")
 
         if target_end is None:
             target_end = len(template)
@@ -429,13 +429,13 @@ class PrimerDesign:
 
             # 결과 확인
             if result['PRIMER_PAIR_NUM_RETURNED'] == 0:
-                error_msg = "⚠️  적절한 프라이머를 찾을 수 없습니다."
+                error_msg = "Warning: no suitable primer was found."
                 if 'PRIMER_ERROR' in result:
-                    error_msg += f" (Primer3 오류: {result['PRIMER_ERROR']})"
+                    error_msg += f" (Primer3 error: {result['PRIMER_ERROR']})"
                 if 'PRIMER_LEFT_EXPLAIN' in result:
-                    error_msg += f"\n  Forward 설명: {result['PRIMER_LEFT_EXPLAIN']}"
+                    error_msg += f"\n  Forward explain: {result['PRIMER_LEFT_EXPLAIN']}"
                 if 'PRIMER_RIGHT_EXPLAIN' in result:
-                    error_msg += f"\n  Reverse 설명: {result['PRIMER_RIGHT_EXPLAIN']}"
+                    error_msg += f"\n  Reverse explain: {result['PRIMER_RIGHT_EXPLAIN']}"
                 warnings.append(error_msg)
                 return {
                     'forward': None,
@@ -469,8 +469,8 @@ class PrimerDesign:
                 # 기본값으로 갈아타지 않는다 — 그러면 무엇을 요청하든 같은 프라이머가
                 # 나와서 "값을 바꿔도 결과가 안 변한다"가 된다(2026-11-05 Y9).
                 _pick = min(_cands, key=lambda c: (c[5], abs(c[3] - c[4])))
-                _msg = (f"요청하신 Tm {_tm_lo:g}~{_tm_hi:g}℃ 안에서 프라이머 **쌍**을 "
-                        f"만들지 못해 가장 가까운 쌍으로 설계했습니다 "
+                _msg = (f"No primer **pair** fits inside the requested Tm window {_tm_lo:g}-{_tm_hi:g}C, "
+                        f"so the closest pair was designed instead "
                         f"(fwd {_pick[3]:.1f}℃/{len(_pick[1])}nt · "
                         f"rev {_pick[4]:.1f}℃/{len(_pick[2])}nt).")
                 _why = _explain_shortfall_axis(_pick[3], _pick[4], _tm_lo, _tm_hi)
@@ -528,9 +528,9 @@ class PrimerDesign:
             rev_access = analyze_target_accessibility(
                 template, max(0, rev_start - len(rev_seq) + 1), rev_start + 1)
             if fwd_access['warning']:
-                warnings.append(f"Forward 결합부위: {fwd_access['warning']}")
+                warnings.append(f"Forward binding site: {fwd_access['warning']}")
             if rev_access['warning']:
-                warnings.append(f"Reverse 결합부위: {rev_access['warning']}")
+                warnings.append(f"Reverse binding site: {rev_access['warning']}")
 
             return {
                 'forward': fwd_seq,
@@ -549,7 +549,7 @@ class PrimerDesign:
             }
 
         except Exception as e:
-            warnings.append(f"❌ primer3 실행 오류: {e}")
+            warnings.append(f"primer3 failed: {e}")
             return {
                 'forward': None,
                 'reverse': None,
@@ -601,8 +601,8 @@ class PrimerDesign:
         #    유저가 BsmBI를 고르고도 BsaI 프라이머를 받는, 알아채기 어려운 오류라 에러로 바꾼다.
         if restriction_enzyme not in enzyme_sites:
             raise ValueError(
-                f"지원하지 않는 제한효소: {restriction_enzyme!r} "
-                f"(지원: {list(SUPPORTED_ENZYMES)})"
+                f"Unsupported restriction enzyme: {restriction_enzyme!r} "
+                f"(supported: {list(SUPPORTED_ENZYMES)})"
             )
 
         site_info = enzyme_sites[restriction_enzyme]
@@ -751,20 +751,20 @@ class PrimerDesign:
         tm_warnings = []
         for side, fit in (("Fwd", fwd_fit), ("Rev", rev_fit)):
             if fit["adjusted"]:
-                print(f"     🔧 [{side}] amplicon {AMP_MIN}→{fit['len']}bp 조정 "
-                      f"(Tm amplicon {fit['tm_amp']:.1f} / 전체 {fit['tm_full']:.1f}, diff {fit['diff']:.1f}°C)")
+                print(f"     [adj] [{side}] amplicon {AMP_MIN}->{fit['len']}bp "
+                      f"(Tm amplicon {fit['tm_amp']:.1f} / full {fit['tm_full']:.1f}, diff {fit['diff']:.1f}C)")
             if not fit["ok"]:
                 unmet = []
                 if not fit.get("tm_ok", True):
-                    unmet.append(f"Tm 범위 [{prm.tm_min:.1f}, {prm.tm_max:.1f}]℃ 밖"
+                    unmet.append(f"outside the Tm window [{prm.tm_min:.1f}, {prm.tm_max:.1f}]C"
                                  f"(anneal {fit['tm_amp']:.1f}℃)")
                 if not fit.get("diff_ok", True):
-                    unmet.append(f"anneal↔전체 Tm 차 {fit['diff']:.1f}℃ > {TM_DIFF_MAX}℃")
+                    unmet.append(f"anneal-vs-full Tm gap {fit['diff']:.1f}C > {TM_DIFF_MAX}C")
                 detail = " / ".join(unmet) if unmet else f"diff {fit['diff']:.1f}°C"
                 tm_warnings.append(
-                    f"{side}: 60bp 안에서 목표를 못 맞춰 최적 근사 채택 — {detail} "
-                    f"(anneal {fit['tm_amp']:.1f}℃ / 전체 {fit['tm_full']:.1f}℃)")
-                print(f"     ⚠️ [{side}] 60bp 내 최적 근사 프라이머 사용 — {detail}")
+                    f"{side}: the target could not be met within 60bp, so the closest fit was taken - "
+                    f"{detail} (anneal {fit['tm_amp']:.1f}C / full {fit['tm_full']:.1f}C)")
+                print(f"     [WARN] [{side}] closest-fit primer within 60bp - {detail}")
 
         # 10. template accessibility (별개 축, 경고만): 말단 고정 binding site(amplicon 양 말단)가
         #   insert 서열 내에서 접혀 접근 저해되는지. 위치는 못 바꾸는 축(말단 고정) → fail 아님.
@@ -776,9 +776,9 @@ class PrimerDesign:
         rev_access = analyze_target_accessibility(
             tmpl_seq, max(target_start, target_end - rev_fit['len']), target_end)
         if fwd_access['warning']:
-            all_warnings.append(f"Fwd 결합부위: {fwd_access['warning']}")
+            all_warnings.append(f"Fwd binding site: {fwd_access['warning']}")
         if rev_access['warning']:
-            all_warnings.append(f"Rev 결합부위: {rev_access['warning']}")
+            all_warnings.append(f"Rev binding site: {rev_access['warning']}")
         # 프라이머 자체 검증의 비차단 경고(tail/노출ss hairpin·dimer)도 합류
         all_warnings.extend([f"Fwd: {w}" for w in fwd_val.get('warnings', [])])
         all_warnings.extend([f"Rev: {w}" for w in rev_val.get('warnings', [])])
@@ -887,7 +887,7 @@ class ValidatePrimer:
             True
         """
         if not primer1 or not primer2:
-            raise ValueError("프라이머가 비어있습니다")
+            raise ValueError("The primer is empty")
 
         primer1 = primer1.upper()
         primer2 = primer2.upper()
@@ -927,13 +927,13 @@ class ValidatePrimer:
             # 경고 메시지
             warning = ""
             if delta_g < -9:
-                warning = f"⚠️⚠️  매우 강한 dimer (ΔG = {delta_g:.2f} kcal/mol, Tm = {tm:.1f}°C)"
+                warning = f"Very strong dimer (dG = {delta_g:.2f} kcal/mol, Tm = {tm:.1f}C)"
             elif delta_g < -7:
-                warning = f"⚠️  강한 dimer (ΔG = {delta_g:.2f} kcal/mol, Tm = {tm:.1f}°C)"
+                warning = f"Strong dimer (dG = {delta_g:.2f} kcal/mol, Tm = {tm:.1f}C)"
             elif delta_g < -5:
-                warning = f"⚠️  중간 dimer (ΔG = {delta_g:.2f} kcal/mol, Tm = {tm:.1f}°C)"
+                warning = f"Moderate dimer (dG = {delta_g:.2f} kcal/mol, Tm = {tm:.1f}C)"
             elif delta_g < -3:
-                warning = f"약한 dimer (ΔG = {delta_g:.2f} kcal/mol, Tm = {tm:.1f}°C)"
+                warning = f"Weak dimer (dG = {delta_g:.2f} kcal/mol, Tm = {tm:.1f}C)"
 
             return {
                 'has_dimer': has_dimer,
@@ -943,7 +943,7 @@ class ValidatePrimer:
             }
 
         except Exception as e:
-            print(f"❌ primer3 dimer 계산 오류: {e}")
+            print(f"primer3 dimer calculation failed: {e}")
             return {
                 'has_dimer': False,
                 'delta_g': 0.0,
@@ -983,7 +983,7 @@ class ValidatePrimer:
             False
         """
         if not primer:
-            raise ValueError("프라이머가 비어있습니다")
+            raise ValueError("The primer is empty")
 
         primer = primer.upper()
 
@@ -1000,11 +1000,11 @@ class ValidatePrimer:
         # 경고 메시지
         warning = ""
         if gc_count == 0:
-            warning = "⚠️  3' 말단에 GC가 없습니다 (불안정한 결합)"
+            warning = "No GC at the 3' end (unstable binding)"
         elif gc_count > max_gc:
-            warning = f"⚠️  3' 말단 GC가 너무 많습니다 ({gc_count}개, 권장: {min_gc}-{max_gc}개)"
+            warning = f"Too much GC at the 3' end ({gc_count}, recommended {min_gc}-{max_gc})"
         elif gc_count < min_gc:
-            warning = f"⚠️  3' 말단 GC가 부족합니다 ({gc_count}개, 권장: {min_gc}-{max_gc}개)"
+            warning = f"Too little GC at the 3' end ({gc_count}, recommended {min_gc}-{max_gc})"
 
         return {
             'has_gc_clamp': has_gc_clamp,
@@ -1050,7 +1050,7 @@ class ValidatePrimer:
             True
         """
         if not template or not primer:
-            raise ValueError("서열이 비어있습니다")
+            raise ValueError("The sequence is empty")
 
         from Bio.Seq import Seq
 
@@ -1104,9 +1104,9 @@ class ValidatePrimer:
         # 경고 메시지
         warning = ""
         if not target_match:
-            warning = f"⚠️⚠️  프라이머가 template에서 찾을 수 없습니다!"
+            warning = f"The primer was not found in the template"
         elif off_target_count > 0:
-            warning = f"⚠️  Off-target 결합 {off_target_count}개 발견 (위치: {off_target_positions[:3]}{'...' if off_target_count > 3 else ''})"
+            warning = f"{off_target_count} off-target bindings found (at {off_target_positions[:3]}{'...' if off_target_count > 3 else ''})"
 
         return {
             'is_specific': is_specific,
@@ -1195,7 +1195,7 @@ class ValidatePrimer:
             True
         """
         if not primer:
-            raise ValueError("프라이머가 비어있습니다")
+            raise ValueError("The primer is empty")
 
         primer = primer.upper()
         # anneal 부분 = 5' tail을 뺀 3' 영역(1차 cycle에 template 결합). tail_len=0이면 전체(일반 PCR).
@@ -1208,7 +1208,7 @@ class ValidatePrimer:
         # 하드 차단(violation=red)이 아니라 경고(yellow)로 둔다 — dimer/hairpin의 tail 처리와 일관.
         # 순수 PCR(tail_len=0)은 anneal==full이라 기존대로 violation(red) 유지.
         anneal_gate = warnings if tail_len else violations
-        _t = " (tail — 경고)" if tail_len else ""
+        _t = " (tail - warning)" if tail_len else ""
 
         # ── 판정 기준은 **유저가 선언한 값** 하나다 (2026-11-05 Y11) ─────────────
         # 예전에는 세 축 모두 선언창 바깥에 판정창을 하나 더 뒀다(`qc_tm_*` 45~85℃,
@@ -1252,31 +1252,31 @@ class ValidatePrimer:
             # 주문 단위는 **전체 프라이머**다(tail 포함). 결합부만 재면 못 잡는다.
             if len(primer) > PRIMER_ORDER_MAX_NT:
                 anneal_gate.append(
-                    f"주문할 프라이머가 합성 상한보다 깁니다 "
+                    f"The primer to order is longer than the synthesis limit "
                     f"({len(primer)} nt > {PRIMER_ORDER_MAX_NT} nt){_t}")
             if length < _p.amp_min:
                 anneal_gate.append(
-                    f"주형 결합부가 특이성 하한보다 짧습니다 "
-                    f"({length} bp < {_p.amp_min} bp — 짧은 부품이라 결합부가 tail에 "
-                    f"흡수된 경우입니다){_t}")
+                    f"The template-binding region is shorter than the specificity floor "
+                    f"({length} bp < {_p.amp_min} bp - the part is short, so the binding region was "
+                    f"absorbed into the tail){_t}")
         else:
             if length < _p.primer_len_min:
                 anneal_gate.append(
-                    f"프라이머가 설정한 길이 하한보다 짧습니다 "
+                    f"The primer is shorter than the length floor you set "
                     f"({length} bp < {_p.primer_len_min} bp){_t}")
             elif length > _p.primer_len_max:
                 anneal_gate.append(
-                    f"프라이머가 설정한 길이 상한보다 깁니다 "
+                    f"The primer is longer than the length ceiling you set "
                     f"({length} bp > {_p.primer_len_max} bp){_t}")
 
         # 2. Tm 체크 — anneal 부분 기준 (1차 cycle 결합부)
         tm = calculate_tm(anneal, **_p.tm_kwargs())
         if tm < min_tm:
             anneal_gate.append(
-                f"Tm이 설정한 하한보다 낮습니다 ({tm:.1f}°C < {min_tm:g}°C){_t}")
+                f"Tm is below the floor you set ({tm:.1f}C < {min_tm:g}C){_t}")
         elif tm > max_tm:
             anneal_gate.append(
-                f"Tm이 설정한 상한보다 높습니다 ({tm:.1f}°C > {max_tm:g}°C){_t}")
+                f"Tm is above the ceiling you set ({tm:.1f}C > {max_tm:g}C){_t}")
 
         # 3. GC% 체크 — anneal 부분 기준, **선언창 1층**(2026-11-05 Y11)
         #    Y7에서 둔 경고층(`qc_gc_ideal_*` 40~60%)을 제거했다. 그 층은 유저가
@@ -1286,10 +1286,10 @@ class ValidatePrimer:
         gc_content = calculate_gc_content(anneal)
         if gc_content < min_gc:
             anneal_gate.append(
-                f"GC%가 설정한 하한보다 낮습니다 ({gc_content:.1%} < {min_gc:.1%}){_t}")
+                f"GC% is below the floor you set ({gc_content:.1%} < {min_gc:.1%}){_t}")
         elif gc_content > max_gc:
             anneal_gate.append(
-                f"GC%가 설정한 상한보다 높습니다 ({gc_content:.1%} > {max_gc:.1%}){_t}")
+                f"GC% is above the ceiling you set ({gc_content:.1%} > {max_gc:.1%}){_t}")
 
         # 4. GC clamp 체크 (경고만, violations에 추가 안 함)
         gc_clamp_result = ValidatePrimer.check_gc_clamp(primer)
@@ -1346,7 +1346,7 @@ class ValidatePrimer:
         if hp_anneal['has_strong_structure']:
             kind = "3'-end" if hp_anneal['involves_3prime'] else "internal"
             _hp_msg = (f"Hairpin(anneal, {kind}, {_tier.get(hp_anneal['severity'], '')}) "
-                       f"존재 (ΔG = {hp_anneal['delta_g']:.2f} kcal/mol)")
+                       f"present (dG = {hp_anneal['delta_g']:.2f} kcal/mol)")
             if hp_anneal['severity'] == 'strong':
                 violations.append(_hp_msg)
             else:
@@ -1358,18 +1358,19 @@ class ValidatePrimer:
         if hp_exposed and hp_exposed['has_strong_structure']:
             kind = "3'-end" if hp_exposed['involves_3prime'] else "internal"
             structural_notes.append(
-                f"Hairpin(노출 말단 ss, {kind}, {_tier.get(hp_exposed['severity'], '')}, "
-                f"ΔG = {hp_exposed['delta_g']:.2f} kcal/mol) — 조립 시 junction anneal 저해. "
-                f"spacer로 해결 불가, vector/method 조합 재검토 필요"
+                f"Hairpin(exposed single-stranded end, {kind}, {_tier.get(hp_exposed['severity'], '')}, "
+                f"dG = {hp_exposed['delta_g']:.2f} kcal/mol) - blocks junction annealing during "
+                f"assembly. A spacer will not fix this; revisit the vector/method pair"
             )
 
         # (경고) anneal/노출ss 단독으로 설명 안 되는 전체-프라이머 구조(경계 걸침 등) = ① PCR 단계 신호.
         exposed_strong = bool(hp_exposed and hp_exposed['has_strong_structure'])
         if has_hairpin and not hp_anneal['has_strong_structure'] and not exposed_strong:
             structural_notes.append(
-                f"Hairpin(전체 프라이머, {_tier.get(hp_full['severity'], '')}, "
+                f"Hairpin(whole primer, {_tier.get(hp_full['severity'], '')}, "
                 f"ΔG = {hp_full['delta_g']:.2f} kcal/mol) — "
-                f"PCR 증폭 단계 구조(anneal/노출ss 단독으로는 설명 안 됨, 경계 걸침 등)"
+                f"structure in the PCR amplification step (not explained by anneal or exposed ss "
+                f"alone - it straddles a boundary)"
             )
 
         # 7. 다른 프라이머와 dimer 체크
@@ -1378,9 +1379,9 @@ class ValidatePrimer:
                 primer, check_dimer_with, threshold_dg=_p.qc_dimer_dg)
             if dimer_result['has_dimer'] and dimer_result['warning']:
                 if warn_only_dimer:
-                    structural_notes.append(f"프라이머 간 dimer: {dimer_result['warning']}")
+                    structural_notes.append(f"Primer-primer dimer: {dimer_result['warning']}")
                 else:
-                    violations.append(f"프라이머 간 dimer: {dimer_result['warning']}")
+                    violations.append(f"Primer-primer dimer: {dimer_result['warning']}")
 
         # 전체 검증 통과 여부 + 3-tier 요약(🔴 red=차단 / 🟡 yellow=경고만 / 🟢 green)
         passed = len(violations) == 0

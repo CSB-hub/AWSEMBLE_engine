@@ -131,7 +131,7 @@ check(len(plan.crosstalk_pairs) == 1,
 if plan.crosstalk_pairs:
     a, b, n_shared, orient = plan.crosstalk_pairs[0]
     check(orient == "역상보", "[2] 걸린 방향이 기록된다", f"{a} ↔ {b}: {n_shared}bp {orient}")
-    check(any("역상보" in w for w in plan.warnings),
+    check(any("reverse-complement" in w or "역상보" in w for w in plan.warnings),
           "경고 문구에도 방향이 들어간다", (plan.warnings or [""])[0][:62])
 
 # 정방향 케이스도 방향이 바르게 찍히는지 (라벨이 항상 "역상보"로 굳지 않게)
@@ -227,12 +227,12 @@ if cc_path.exists():
           "; ".join(f"{r['kind']} {r['value']}쌍 → {r['verdict']}" for r in _sum))
     check(all(str(r["value"]).isdigit() and int(r["value"]) > 0 for r in _sum),
           "[11] 요약 행에 검사한 쌍 수(분모)가 들어 있다")
-    _blocked = [r for r in cc if r["verdict"] == "차단"]
-    _noted = [r for r in cc if r["verdict"] != "차단"]
+    _blocked = [r for r in cc if r["verdict"] == "BLOCKED"]
+    _noted = [r for r in cc if r["verdict"] != "BLOCKED"]
     print(f"     쌍 {len(cc)}건 — 차단 {len(_blocked)} / 기록 {len(_noted)}")
     check(len(_noted) > 0, "[7] 기록 등급이 존재한다 (중간 등급을 버리지 않는다)")
     # [7] 기록 등급은 행을 red로 만들지 않는다
-    _x_red = [r for r in rows if "교차 dimer" in (r.get("violations") or "")]
+    _x_red = [r for r in rows if "Cross dimer" in (r.get("violations") or "")]
     check(len(_x_red) <= 2 * len(_blocked),
           "[7] 차단 등급만 행을 red로 만든다 (기록 등급은 행을 안 건드린다)",
           f"교차로 red {len(_x_red)}행 ≤ 차단 {len(_blocked)}쌍 × 2")
@@ -256,7 +256,7 @@ if cc2_path.exists():
     check(len(cc2) == len(_s2) and len(_s2) > 0,
           "[12] 요약 행만 있고 걸린 쌍 행은 없다",
           "; ".join(f"{r['kind']} {r['value']}쌍 → {r['verdict']}" for r in _s2))
-    check(all(r["verdict"] == "통과" for r in _s2),
+    check(all(r["verdict"] == "clean" for r in _s2),
           "[12] 판정이 '통과'로 적힌다 (빈 파일이 아니라 결과로 읽힌다)")
     check(len(_x_red) < len(rows),
           "[7] 과반이 red가 되지 않는다 (2026-10-20 ΔG 소음 재발 방지)",

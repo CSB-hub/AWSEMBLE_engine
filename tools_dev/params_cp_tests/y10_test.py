@@ -166,7 +166,7 @@ try:
     DesignParams(na_mM=0.0, k_mM=0.0, tris_mM=0.0).validate()
     check(False, "1가 염이 전부 0이면 에러여야 한다")
 except ValueError as e:
-    check("1가 염" in str(e), "1가 염 0은 차단", str(e).splitlines()[-1][:60])
+    check("Monovalent salt" in str(e), "1가 염 0은 차단", str(e).splitlines()[-1][:60])
 try:
     DesignParams(tm_saltcorr=99).validate()
     check(False, "알 수 없는 saltcorr는 에러여야 한다")
@@ -207,7 +207,7 @@ for name in ("taq", "phusion", "q5"):
     rows = list(csv.DictReader(open(d / "reports" / "primers.csv")))
     sheets[name] = rows
     pcr = [r for r in rows if r.get("production") == "pcr"]
-    near = [r for r in pcr if "가장 가까운 쌍" in (r.get("warnings") or "")]
+    near = [r for r in pcr if "closest pair" in (r.get("warnings") or "")]
     print(f"  {name:<9} PCR {len(pcr)}행 · 창 못 맞춘 행 {len(near)}개")
     check(not near, f"{name}: 기본값으로 상시 경고가 나지 않는다",
           "경고 없음" if not near

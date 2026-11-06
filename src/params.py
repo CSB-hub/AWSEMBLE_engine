@@ -500,39 +500,39 @@ class DesignParams:
         # ── 하드: 프라이머 길이 ──
         if self.primer_len_max > PRIMER3_MAX_SIZE:
             errs.append(
-                f"primer_len_max={self.primer_len_max}는 primer3 내장 최대 {PRIMER3_MAX_SIZE}를 넘습니다 "
-                f"(초과 시 primer3가 'PRIMER_MAX_SIZE exceeds built-in maximum'로 실패)."
+                f"primer_len_max={self.primer_len_max} exceeds the primer3 built-in maximum {PRIMER3_MAX_SIZE} "
+                f"(primer3 fails with 'PRIMER_MAX_SIZE exceeds built-in maximum')."
             )
         if self.primer_len_min < 1:
-            errs.append(f"primer_len_min={self.primer_len_min}: 1 이상이어야 합니다.")
+            errs.append(f"primer_len_min={self.primer_len_min}: must be 1 or more.")
         if self.primer_len_min > self.primer_len_max:
             errs.append(
                 f"primer_len_min({self.primer_len_min}) > primer_len_max({self.primer_len_max})."
             )
         if not (self.primer_len_min <= self.primer_len_opt <= self.primer_len_max):
             errs.append(
-                f"primer_len_opt({self.primer_len_opt})가 min~max"
-                f"({self.primer_len_min}~{self.primer_len_max}) 밖입니다."
+                f"primer_len_opt({self.primer_len_opt}) is outside min-max"
+                f"({self.primer_len_min}-{self.primer_len_max})."
             )
 
         # ── 하드: Tm / 농도 ──
         if self.tm_min <= 0 or self.tm_max <= 0:
-            errs.append(f"tm_min/tm_max({self.tm_min}/{self.tm_max}): 0보다 커야 합니다.")
+            errs.append(f"tm_min/tm_max({self.tm_min}/{self.tm_max}): must be greater than 0.")
         elif self.tm_min >= self.tm_max:
             errs.append(
-                f"tm_min({self.tm_min}) >= tm_max({self.tm_max}): Tm 범위는 "
-                f"[하한, 상한] 순서여야 하고 폭이 0보다 커야 합니다."
+                f"tm_min({self.tm_min}) >= tm_max({self.tm_max}): the Tm window must be "
+                f"[low, high] and wider than 0."
             )
         # 선언창이 곧 판정창이므로(Y11) 물리 경계는 **여기서** 막는다.
         # 판정에서 걸러내는 게 아니라 애초에 못 넣게 한다 — GUI·Galaxy XML의 입력
         # min/max와 같은 숫자이고, 이 검사가 GUI를 거치지 않는 호출의 방어선이다.
         if self.tm_min < TM_INPUT_MIN or self.tm_max > TM_INPUT_MAX:
             errs.append(
-                f"Tm 범위 [{self.tm_min:g}, {self.tm_max:g}]℃가 입력 허용 범위 "
-                f"[{TM_INPUT_MIN:g}, {TM_INPUT_MAX:g}]℃를 벗어납니다 — "
-                f"{TM_INPUT_MIN:g}℃ 아래는 annealing 단계에서 프라이머가 주형에 "
-                f"붙어 있지 못하고, {TM_INPUT_MAX:g}℃ 위는 extension 온도를 넘어 "
-                f"annealing 단계가 뜻을 잃습니다."
+                f"The Tm window [{self.tm_min:g}, {self.tm_max:g}]C falls outside the allowed "
+                f"input range [{TM_INPUT_MIN:g}, {TM_INPUT_MAX:g}]C - below {TM_INPUT_MIN:g}C "
+                f"a primer cannot stay on the template during annealing, and above "
+                f"{TM_INPUT_MAX:g}C it passes the extension temperature, so the annealing "
+                f"step loses its meaning."
             )
         # ⚠️ 1가 염은 **합산**으로 본다(2026-11-05). NEB 버퍼는 Na+가 아니라 K+/Tris
         #    기반이라 `na_mM`만 보면 정상 설정(Na=0, K=50, Tris=10)을 오류로 막는다.
@@ -542,29 +542,29 @@ class DesignParams:
                        ("tris_mM", self.tris_mM), ("mg_mM", self.mg_mM),
                        ("dntp_mM", self.dntp_mM)):
             if _v < 0:
-                errs.append(f"{_n}={_v}: 음수일 수 없습니다.")
+                errs.append(f"{_n}={_v}: cannot be negative.")
         if _monovalent <= 0:
             errs.append(
-                f"1가 염 농도가 0입니다 (Na {self.na_mM} + K {self.k_mM} + "
-                f"Tris/2 {self.tris_mM / 2.0} = {_monovalent}) — Tm을 계산할 수 없습니다."
+                f"Monovalent salt is 0 (Na {self.na_mM} + K {self.k_mM} + "
+                f"Tris/2 {self.tris_mM / 2.0} = {_monovalent}) - Tm cannot be computed."
             )
         if self.tm_saltcorr not in (1, 2, 3, 4, 5, 6, 7):
             errs.append(
-                f"tm_saltcorr={self.tm_saltcorr}: Biopython MeltingTemp의 염보정 "
-                f"방식 번호여야 합니다(1~7). NEB 재현값은 6(Owczarzy) 또는 1(Schildkraut)."
+                f"tm_saltcorr={self.tm_saltcorr}: must be a Biopython MeltingTemp salt-correction "
+                f"method number (1-7). NEB reproduction uses 6 (Owczarzy) or 1 (Schildkraut)."
             )
         if self.primer_conc_nM <= 0:
-            errs.append(f"primer_conc_nM={self.primer_conc_nM}: 0보다 커야 합니다(Tm 계산 불가).")
+            errs.append(f"primer_conc_nM={self.primer_conc_nM}: must be greater than 0 (Tm cannot be computed).")
 
         # ── 하드: GC ──
         if not (0.0 <= self.gc_min <= 100.0) or not (0.0 <= self.gc_max <= 100.0):
-            errs.append(f"gc_min/gc_max({self.gc_min}/{self.gc_max})는 0~100 사이여야 합니다.")
+            errs.append(f"gc_min/gc_max({self.gc_min}/{self.gc_max}) must be between 0 and 100.")
         elif self.gc_min > self.gc_max:
             errs.append(f"gc_min({self.gc_min}) > gc_max({self.gc_max}).")
 
         # ── 하드: Gibson homology ──
         if self.gibson_overlap < 1:
-            errs.append(f"gibson_overlap={self.gibson_overlap}: 1 이상이어야 합니다.")
+            errs.append(f"gibson_overlap={self.gibson_overlap}: must be 1 or more.")
 
         # part→module 접합부: PCR fragment는 자기 몸에서 좌우 접합부 구간을 떼어주므로
         # body >= 2*arm이어야 두 구간이 겹치지 않는다. PCR 그룹은 정의상 oligo_max_bp 이상이라
@@ -572,7 +572,7 @@ class DesignParams:
         if self.gibson_overlap_max < self.gibson_overlap:
             errs.append(
                 f"gibson_overlap_max({self.gibson_overlap_max}) < "
-                f"gibson_overlap({self.gibson_overlap}) — 범위가 뒤집혔습니다."
+                f"gibson_overlap({self.gibson_overlap}) - the range is inverted."
             )
 
         # ── 하드: Yeast HR homology ──
@@ -582,7 +582,7 @@ class DesignParams:
         if not (lo <= self.yeast_homology_min <= hi) or not (lo <= self.yeast_homology_max <= hi):
             errs.append(
                 f"yeast_homology {self.yeast_homology_min}~{self.yeast_homology_max}: "
-                f"{lo}~{hi}bp 안이어야 합니다 (yeast HR 문헌 범위)."
+                f"must be within {lo}-{hi}bp (the yeast HR range reported in the literature)."
             )
         elif self.yeast_homology_min > self.yeast_homology_max:
             errs.append(
@@ -593,58 +593,58 @@ class DesignParams:
         # ── 하드: 기타 ──
         if self.gg_enzyme not in SUPPORTED_ENZYMES:
             errs.append(
-                f"gg_enzyme={self.gg_enzyme!r}: 지원하지 않는 효소입니다 "
-                f"(지원: {list(SUPPORTED_ENZYMES)}). 추가하려면 params.SUPPORTED_ENZYMES에 이름을 넣으세요."
+                f"gg_enzyme={self.gg_enzyme!r}: unsupported enzyme "
+                f"(supported: {list(SUPPORTED_ENZYMES)}). To add one, put its name in params.SUPPORTED_ENZYMES."
             )
         if self.site_5prime_pad is not None and self.site_5prime_pad < 0:
-            errs.append(f"site_5prime_pad={self.site_5prime_pad}: 음수일 수 없습니다.")
+            errs.append(f"site_5prime_pad={self.site_5prime_pad}: cannot be negative.")
         if self.site_5prime_pad_seq and set(self.site_5prime_pad_seq.upper()) - set("ATGC"):
             errs.append(
-                f"site_5prime_pad_seq={self.site_5prime_pad_seq!r}: ATGC만 사용할 수 있습니다."
+                f"site_5prime_pad_seq={self.site_5prime_pad_seq!r}: only ATGC is allowed."
             )
         if self.max_poly_x < 1:
-            errs.append(f"max_poly_x={self.max_poly_x}: 1 이상이어야 합니다.")
+            errs.append(f"max_poly_x={self.max_poly_x}: must be 1 or more.")
         if self.excision_method not in EXCISION_METHODS:
             errs.append(
-                f"excision_method={self.excision_method!r}: {EXCISION_METHODS} 중 하나여야 합니다."
+                f"excision_method={self.excision_method!r}: must be one of {EXCISION_METHODS}."
             )
         if self.excision_enzyme is not None and self.excision_enzyme not in SUPPORTED_ENZYMES:
             errs.append(
-                f"excision_enzyme={self.excision_enzyme!r}: 지원하지 않는 효소입니다 "
-                f"(지원: {list(SUPPORTED_ENZYMES)})."
+                f"excision_enzyme={self.excision_enzyme!r}: unsupported enzyme "
+                f"(supported: {list(SUPPORTED_ENZYMES)})."
             )
         if self.excision_enzyme is not None and self.excision_enzyme == self.gg_enzyme:
             errs.append(
-                f"excision_enzyme이 조립 효소({self.gg_enzyme})와 같습니다. Type IIS 조립은 "
-                f"인식서열을 없애므로 같은 효소로는 module을 되꺼낼 수 없습니다."
+                f"excision_enzyme is the same as the assembly enzyme ({self.gg_enzyme}). Type IIS "
+                f"assembly removes the recognition site, so the same enzyme cannot excise the module."
             )
         if self.module_assembly_type not in ASSEMBLY_TYPES:
             errs.append(
-                f"module_assembly_type={self.module_assembly_type!r}: {ASSEMBLY_TYPES} 중 하나여야 합니다."
+                f"module_assembly_type={self.module_assembly_type!r}: must be one of {ASSEMBLY_TYPES}."
             )
 
         # ── 하드: 프라이머 길이 수렴 / 판정 축 ──
         if self.tm_diff_max < 0:
-            errs.append(f"tm_diff_max={self.tm_diff_max}: 음수일 수 없습니다.")
+            errs.append(f"tm_diff_max={self.tm_diff_max}: cannot be negative.")
         if self.pair_tm_diff_max < 0:
-            errs.append(f"pair_tm_diff_max={self.pair_tm_diff_max}: 음수일 수 없습니다.")
+            errs.append(f"pair_tm_diff_max={self.pair_tm_diff_max}: cannot be negative.")
         if self.spacer_mode not in ("vector_homology", "library"):
             errs.append(
-                f"spacer_mode={self.spacer_mode!r}: 'vector_homology' 또는 'library'만 됩니다."
+                f"spacer_mode={self.spacer_mode!r}: only 'vector_homology' or 'library' is allowed."
             )
         if self.linearization_enzyme:
             from basic.sequence_analysis import LINEARIZATION_ENZYMES
             if self.linearization_enzyme not in LINEARIZATION_ENZYMES:
                 errs.append(
-                    f"linearization_enzyme={self.linearization_enzyme!r}: 지원 목록에 없습니다 "
+                    f"linearization_enzyme={self.linearization_enzyme!r}: not in the supported list "
                     f"({', '.join(LINEARIZATION_ENZYMES)})"
                 )
         if self.amp_min < 1:
-            errs.append(f"amp_min={self.amp_min}: 1 이상이어야 합니다.")
+            errs.append(f"amp_min={self.amp_min}: must be 1 or more.")
         elif self.amp_min > THERMO_MAX_LEN:
             errs.append(
-                f"amp_min={self.amp_min}bp가 열역학 계산 상한 {THERMO_MAX_LEN}bp를 넘습니다 "
-                f"— 이 길이로는 프라이머 품질 계산이 불가능합니다."
+                f"amp_min={self.amp_min}bp exceeds the thermodynamic calculation limit {THERMO_MAX_LEN}bp "
+                f"- primer quality cannot be computed at this length."
             )
         for _n, _v in (("qc_hairpin_dg_3prime", self.qc_hairpin_dg_3prime),
                        ("qc_hairpin_dg_internal", self.qc_hairpin_dg_internal),
@@ -652,8 +652,8 @@ class DesignParams:
                        ("qc_dg_absolute", self.qc_dg_absolute)):
             if _v > 0:
                 errs.append(
-                    f"{_n}={_v}: ΔG 컷오프는 0 이하여야 합니다 "
-                    f"(음수일수록 안정한 구조를 뜻하고, 컷오프보다 더 음수면 문제로 판정합니다)."
+                    f"{_n}={_v}: a dG cutoff must be 0 or below "
+                    f"(more negative means a more stable structure; anything below the cutoff is flagged)."
                 )
 
         # ── 하드: GC 단위 실수 방어 (% vs 0~1 분수) ──
@@ -663,8 +663,8 @@ class DesignParams:
         for _n, _v in (("gc_min", self.gc_min), ("gc_max", self.gc_max)):
             if 0.0 < _v < 1.0:
                 errs.append(
-                    f"{_n}={_v}: 단위가 **%** 입니다(0~100). 0~1 분수를 넣은 것으로 보입니다 "
-                    f"— {_v * 100:.0f}을(를) 의도했다면 그 값을 그대로 넣으세요."
+                    f"{_n}={_v}: the unit is **%** (0-100). This looks like a 0-1 fraction "
+                    f"- if you meant {_v * 100:.0f}, enter that number."
                 )
 
         # ── 하드: 패딩 서열이 **새 제한효소 사이트를 만들지 않는가** ──
@@ -675,7 +675,7 @@ class DesignParams:
             errs.extend(self._check_pad_creates_site())
 
         if errs:
-            raise ValueError("설계 파라미터 오류:\n  - " + "\n  - ".join(errs))
+            raise ValueError("Design parameter error:\n  - " + "\n  - ".join(errs))
 
         # ── 소프트: 경고만 (차단하지 않음) ──
         warns: List[str] = []
@@ -685,33 +685,33 @@ class DesignParams:
         lo, hi = _SOFT_TM_RANGE
         if self.tm_min < lo or self.tm_max > hi:
             warns.append(
-                f"Tm 범위 [{self.tm_min}, {self.tm_max}]℃가 일반적 범위({lo}~{hi}℃) 밖입니다."
+                f"The Tm window [{self.tm_min}, {self.tm_max}]C is outside the usual range ({lo}-{hi}C)."
             )
         wlo, whi = _SOFT_TM_WIDTH
         width = self.tm_max - self.tm_min
         if width < wlo:
             warns.append(
-                f"Tm 범위 폭이 {width:.1f}℃로 좁습니다(권장 {wlo:g}℃ 이상) — "
-                f"이 서열에서 맞출 수 있는 프라이머가 없을 수 있습니다."
+                f"The Tm window is only {width:.1f}C wide (recommended {wlo:g}C or more) - "
+                f"there may be no primer on this sequence that fits."
             )
         elif width > whi:
             warns.append(
-                f"Tm 범위 폭이 {width:.1f}℃로 넓습니다(권장 {whi:g}℃ 이하) — "
-                f"범위 양 끝의 프라이머가 서로 다른 조건에서 동작합니다."
+                f"The Tm window is {width:.1f}C wide (recommended {whi:g}C or less) - "
+                f"primers at the two ends would run under different conditions."
             )
         if self.primer_len_min < _SOFT_PRIMER_LEN_MIN:
             warns.append(
-                f"primer_len_min={self.primer_len_min}bp가 짧습니다(권장 {_SOFT_PRIMER_LEN_MIN}bp 이상)."
+                f"primer_len_min={self.primer_len_min}bp is short (recommended {_SOFT_PRIMER_LEN_MIN}bp or more)."
             )
         glo, ghi = _SOFT_GC_RANGE
         if self.gc_min < glo or self.gc_max > ghi:
             warns.append(
-                f"GC 범위({self.gc_min}~{self.gc_max}%)가 일반적 범위({glo}~{ghi}%)보다 넓습니다."
+                f"The GC window ({self.gc_min}-{self.gc_max}%) is wider than the usual range ({glo}-{ghi}%)."
             )
         olo, ohi = _SOFT_GIBSON_OVERLAP_RANGE
         if not (olo <= self.gibson_overlap <= ohi):
             warns.append(
-                f"gibson_overlap={self.gibson_overlap}bp가 일반적 범위({olo}~{ohi}bp) 밖입니다."
+                f"gibson_overlap={self.gibson_overlap}bp is outside the usual range ({olo}-{ohi}bp)."
             )
 
         # homology는 프라이머의 5' tail이 되므로 tail + anneal이 THERMO_MAX_LEN을 넘을 수 있다.
@@ -727,14 +727,14 @@ class DesignParams:
             warns.append(
                 f"gibson_overlap({self.gibson_overlap}) + primer_len_min({self.primer_len_min}) = "
                 f"{self.gibson_overlap + self.primer_len_min}bp가 primer3 계산 상한 "
-                f"{THERMO_MAX_LEN}bp를 넘습니다 — 이 조합의 프라이머는 hairpin/dimer가 "
-                f"**경고 전용**으로만 판정됩니다(ViennaRNA). 차단 게이트는 동작하지 않습니다."
+                f"exceeds {THERMO_MAX_LEN}bp - for this combination hairpin/dimer are judged "
+                f"**warning-only** (ViennaRNA). The blocking gate does not run."
             )
         _type_cut = min(self.qc_hairpin_dg_3prime, self.qc_hairpin_dg_internal)
         if self.qc_dg_absolute > _type_cut:
             warns.append(
-                f"qc_dg_absolute({self.qc_dg_absolute})가 hairpin 타입 컷({_type_cut})보다 "
-                f"덜 음수입니다 — 약한 구조가 최상위 경고(strong)로 뜨는 역전이 일어납니다."
+                f"qc_dg_absolute({self.qc_dg_absolute}) is less negative than the hairpin type cut "
+                f"({_type_cut}) - weak structures would be reported at the top tier (strong)."
             )
         # ── 소프트: 패딩 서열 자체의 형질 (차단하진 않지만 프라이머 품질에 영향) ──
         warns.extend(self._check_pad_quality())
@@ -790,18 +790,18 @@ class DesignParams:
                 except Exception:
                     pf = pr = ""
                 if pf and joined.count(pf) > site.count(pf):
-                    strand, pat = "정방향", pf
+                    strand, pat = "forward", pf
                 else:
-                    strand, pat = "역방향", pr
+                    strand, pat = "reverse", pr
 
                 key = (probe, strand)
                 if key in seen:
                     continue
                 seen.add(key)
                 errs.append(
-                    f"site_5prime_pad_seq={self.site_5prime_pad_seq!r}: 인식서열 앞에 붙으면 "
-                    f"**{probe} 사이트({strand} {pat})가 새로 생깁니다** "
-                    f"(예: {enz}에서 {pad}|{site}) — PCR 산물이 의도치 않은 곳에서 잘립니다."
+                    f"site_5prime_pad_seq={self.site_5prime_pad_seq!r}: placed before the recognition "
+                    f"sequence it **creates a new {probe} site ({strand} {pat})** "
+                    f"(e.g. {pad}|{site} for {enz}) - the PCR product would be cut where you did not intend."
                 )
         return errs
 
@@ -815,24 +815,24 @@ class DesignParams:
         # ① self-complementary면 프라이머 5' 끝에서 hairpin이 된다.
         if seq == str(Seq(seq).reverse_complement()):
             warns.append(
-                f"site_5prime_pad_seq={seq!r}가 self-complementary입니다 — 프라이머 5' 끝에서 "
-                f"hairpin이 됩니다."
+                f"site_5prime_pad_seq={seq!r} is self-complementary - it forms a hairpin at the "
+                f"primer 5' end."
             )
         # ② 동종 염기 3연속 — 기본값 선정 때 배제했던 조건. spacer 더미('A'*n)와 이어지면
         #    poly-A 구간이 길어진다.
         for i in range(len(seq) - 2):
             if seq[i] == seq[i + 1] == seq[i + 2]:
                 warns.append(
-                    f"site_5prime_pad_seq={seq!r}에 같은 염기 3연속({seq[i] * 3})이 있습니다 — "
-                    f"합성·증폭 품질이 떨어질 수 있습니다."
+                    f"site_5prime_pad_seq={seq!r} has three identical bases in a row ({seq[i] * 3}) - "
+                    f"synthesis and amplification quality may suffer."
                 )
                 break
         # ③ GC 극단 — 기본값 선정 기준은 33~50%였다.
         gc = 100.0 * sum(c in "GC" for c in seq) / len(seq)
         if not (20.0 <= gc <= 60.0):
             warns.append(
-                f"site_5prime_pad_seq={seq!r}의 GC가 {gc:.0f}%입니다 "
-                f"(기본값 선정 기준은 33~50%)."
+                f"site_5prime_pad_seq={seq!r} has {gc:.0f}% GC "
+                f"(the default was chosen within 33-50%)."
             )
         return warns
 
@@ -959,7 +959,7 @@ class DesignParams:
         unknown = set(data) - known
         if unknown:
             raise ValueError(
-                f"알 수 없는 파라미터: {sorted(unknown)} (허용: {sorted(known)})"
+                f"Unknown parameter: {sorted(unknown)} (allowed: {sorted(known)})"
             )
         return cls(**data)
 
@@ -984,8 +984,8 @@ class DesignParams:
         key = (name or "").strip().lower()
         if key not in PRESETS:
             raise ValueError(
-                f"알 수 없는 프리셋: {name!r} (사용 가능: {sorted(PRESETS)}). "
-                f"추가하려면 params.PRESETS에 넣으세요."
+                f"Unknown preset: {name!r} (available: {sorted(PRESETS)}). "
+                f"To add one, put it in params.PRESETS."
             )
         # 프리셋 → overrides 순으로 덮어쓰고, 나머지는 from_dict가 기본값으로 채운다.
         # (from_dict를 거치므로 모르는 키 검사가 한 곳에서만 일어난다)

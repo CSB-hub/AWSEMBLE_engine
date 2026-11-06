@@ -33,9 +33,9 @@ from typing import Dict, List, Optional
 from Bio.Seq import Seq
 
 #: 등급 이름 — 숫자가 아니라 이 문자열이 시트·UI에 그대로 나간다.
-GRADE_SAFE = "안전"
-GRADE_CAUTION = "주의"
-GRADE_RISKY = "위험"
+GRADE_SAFE = "safe"
+GRADE_CAUTION = "caution"
+GRADE_RISKY = "risky"
 
 
 def _rc(seq: str) -> str:
@@ -54,14 +54,14 @@ def grade_duplex(part_len: int, params=None) -> Dict[str, str]:
     if part_len >= p.duplex_risky_bp:
         return {
             "grade": GRADE_CAUTION,
-            "reason": (f"{part_len}bp — 듀플렉스 Tm이 대략 41~50℃로, one-pot GG의 "
-                       f"37℃ 절단 단계 대비 여유가 적습니다."),
+            "reason": (f"{part_len}bp - duplex Tm is roughly 41-50C, leaving little margin "
+                       f"over the 37C digestion step of one-pot Golden Gate."),
         }
     return {
         "grade": GRADE_RISKY,
-        "reason": (f"{part_len}bp — 듀플렉스 Tm이 37℃ 안팎이거나 그 아래라 "
-                   f"절단 단계에서 두 가닥이 풀릴 수 있습니다. 이 요소는 단독 부품으로 두지 말고 "
-                   f"이웃 부품에 합쳐 넣는 것을 권합니다."),
+        "reason": (f"{part_len}bp - duplex Tm is at or below about 37C, so the two strands "
+                   f"may come apart during digestion. Rather than keeping this as a part of "
+                   f"its own, merge it into a neighbouring part."),
     }
 
 
@@ -121,11 +121,12 @@ def production_note(part_len: int, params=None) -> str:
     from params import DEFAULT_PARAMS
     p = params if params is not None else DEFAULT_PARAMS
     if part_len < p.duplex_safe_bp:
-        return (f"{part_len}bp — PCR 프라이머 2개가 앉을 자리가 없어 증폭이 사실상 불가능합니다. "
-                f"다만 이 길이는 어닐링 듀플렉스도 불안정하니 등급을 확인하세요.")
+        return (f"{part_len}bp - there is no room for two PCR primers, so amplification is "
+                f"effectively impossible. The annealed duplex is unstable at this length "
+                f"too, so check the grade.")
     if part_len < 2 * p.primer_len_opt:
-        return (f"{part_len}bp — fwd/rev 프라이머가 겹쳐 품질이 떨어집니다. 올리고 어닐링을 권합니다.")
-    return (f"{part_len}bp — PCR도 되지만 이 길이는 올리고 어닐링이 더 싸고 확실합니다.")
+        return (f"{part_len}bp - the fwd and rev primers overlap, which costs quality. Oligo annealing is recommended.")
+    return (f"{part_len}bp - PCR works, but at this length oligo annealing is cheaper and more reliable.")
 
 
 def build_oligo_rows(designs: List[dict], params=None) -> List[Dict[str, object]]:
@@ -147,15 +148,15 @@ def build_oligo_rows(designs: List[dict], params=None) -> List[Dict[str, object]
             params=params,
         )
         rows.append({
-            "부품": o["name"],
-            "부품 길이(bp)": o["part_len"],
-            "등급": o["grade"],
-            "주의사항": o["note"],
-            "Top 올리고 (5'→3')": o["top"],
-            "Top 길이(nt)": o["top_len"],
-            "Bottom 올리고 (5'→3')": o["bottom"],
-            "Bottom 길이(nt)": o["bottom_len"],
-            "좌 overhang": o["left_oh"],
-            "우 overhang": o["right_oh"],
+            "part": o["name"],
+            "part_length(bp)": o["part_len"],
+            "grade": o["grade"],
+            "note": o["note"],
+            "top_oligo(5'->3')": o["top"],
+            "top_length(nt)": o["top_len"],
+            "bottom_oligo(5'->3')": o["bottom"],
+            "bottom_length(nt)": o["bottom_len"],
+            "left_overhang": o["left_oh"],
+            "right_overhang": o["right_oh"],
         })
     return rows

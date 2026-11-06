@@ -547,22 +547,22 @@ class GoldenGateModule(AssemblyBase):
                 if row is None:
                     continue
                 row.setdefault("violations", []).append(
-                    f"교차 dimer: {lab.rsplit(' ', 1)[1]} 결합부가 {other}와 강하게 "
-                    f"붙습니다 (ΔG {h['delta_g']:.2f} kcal/mol, 차단 기준 "
-                    f"{self.params.qc_dg_absolute:g}) — 같은 튜브에 들어가므로 "
-                    f"프라이머가 서로 붙어 주형으로 못 갑니다. 자세한 쌍 목록은 "
-                    f"reports/cross_checks.csv를 보세요."
+                    f"Cross dimer: the {lab.rsplit(' ', 1)[1]} annealing region binds {other} "
+                    f"strongly (dG {h['delta_g']:.2f} kcal/mol, blocking cutoff "
+                    f"{self.params.qc_dg_absolute:g}) - they share a tube, so these "
+                    f"primers bind each other instead of the template. See "
+                    f"reports/cross_checks.csv for the full pair list."
                 )
                 row["passed"] = False
                 row["tier"] = "red"
         if blocking:
-            print(f"\n  🔴 one-pot 교차 dimer {len(blocking)}쌍 차단 "
-                  f"(기록 {len(hits)}쌍) — reports/cross_checks.csv")
+            print(f"\n  [BLOCKED] one-pot cross dimer: {len(blocking)} pairs blocked "
+                  f"({len(hits)} recorded) - reports/cross_checks.csv")
         elif hits:
-            print(f"\n  🟡 one-pot 교차 dimer {len(hits)}쌍 기록 "
-                  f"(차단 등급 없음) — reports/cross_checks.csv")
+            print(f"\n  [NOTE] one-pot cross dimer: {len(hits)} pairs recorded "
+                  f"(none at blocking grade) - reports/cross_checks.csv")
         for h in hits[:4]:
-            print(f"     {'차단' if h.get('blocking') else '기록'} "
+            print(f"     {'blocked' if h.get('blocking') else 'noted'} "
                   f"{h['a']} ↔ {h['b']}: ΔG {h['delta_g']:.2f}")
         return hits
 

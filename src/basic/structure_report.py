@@ -135,7 +135,7 @@ def fold(seq: str):
 def _panel(title: str, seq: str, note: str = "") -> str:
     ss, mfe = fold(seq)
     if ss is None:
-        return f"<div class='p'><h4>{html.escape(title)}</h4><p>ViennaRNA 없음</p></div>"
+        return f"<div class='p'><h4>{html.escape(title)}</h4><p>ViennaRNA not available</p></div>"
     svg = _svg(seq, ss)
     return (
         f"<div class='p'><h4>{html.escape(title)}</h4>"
@@ -163,12 +163,13 @@ pre{font-size:.68rem;overflow-x:auto;background:#f7f9fa;padding:8px;border-radiu
 .lead{color:#5b6b7a;font-size:.86rem;max-width:760px}"""
     out = [
         "<!doctype html><html lang='ko'><head><meta charset='utf-8'>",
-        "<title>2차구조 리포트</title>",
+        "<title>Secondary structure report</title>",
         f"<style>{css}</style></head><body>",
-        "<h1>2차구조 리포트</h1>",
-        "<p class='lead'>프라이머가 앉을 <b>template 결합부위</b>와 <b>프라이머 자체</b>를 "
-        "따로 접어 보여줍니다. 결합부위가 막혀 있으면 파츠 서열은 못 바꾸므로 "
-        "조건(온도·첨가제)으로 대응하고, 프라이머 자체 구조는 재설계로 풉니다.</p>",
+        "<h1>Secondary structure report</h1>",
+        "<p class='lead'>The <b>template binding site</b> a primer sits on and the "
+        "<b>primer itself</b> are folded separately. A blocked binding site cannot be "
+        "fixed by changing the part sequence - handle it with conditions (temperature, "
+        "additives). Structure in the primer itself is solved by redesign.</p>",
     ]
     for f in fragments:
         out.append(f"<h2>{html.escape(str(f.get('name', '')))}</h2>")
@@ -176,14 +177,14 @@ pre{font-size:.68rem;overflow-x:auto;background:#f7f9fa;padding:8px;border-radiu
             out.append(f"<div class='note'>{html.escape(str(n))}</div>")
         out.append("<div class='row'>")
         for label, seq, up in (
-            ("Fwd 결합부위 (template)", f.get("fwd_site"), f.get("fwd_unpaired")),
-            ("Rev 결합부위 (template)", f.get("rev_site"), f.get("rev_unpaired")),
-            ("Fwd 프라이머", f.get("fwd_primer"), None),
-            ("Rev 프라이머", f.get("rev_primer"), None),
+            ("Fwd binding site (template)", f.get("fwd_site"), f.get("fwd_unpaired")),
+            ("Rev binding site (template)", f.get("rev_site"), f.get("rev_unpaired")),
+            ("Fwd primer", f.get("fwd_primer"), None),
+            ("Rev primer", f.get("rev_primer"), None),
         ):
             if not seq:
                 continue
-            note = f"미페어확률 {up:.2f}" if isinstance(up, (int, float)) else ""
+            note = f"unpaired probability {up:.2f}" if isinstance(up, (int, float)) else ""
             out.append(_panel(label, str(seq), note))
         out.append("</div>")
     out.append("</body></html>")

@@ -115,35 +115,35 @@ check(55.0 <= base["fwd_tm"] <= 65.0, "실제로 창 안이다", f"{base['fwd_tm
 
 print("\n[3] 못 맞추면 이유가 적힌다")
 for tag, r, lo, hi in (("hot", hot, 64, 68), ("cold", cold, 45, 50)):
-    w = next((x for x in r["warn"].split(" | ") if "가장 가까운 쌍" in x), "")
+    w = next((x for x in r["warn"].split(" | ") if "closest pair" in x), "")
     check(bool(w), f"{lo}~{hi}: 근접 경고가 있다")
-    check(f"{lo}~{hi}" in w, f"{lo}~{hi}: 요청 창이 적혀 있다")
-    check("reverse" in w or "forward" in w or "양쪽" in w,
+    check(f"{lo}-{hi}" in w, f"{lo}-{hi}: 요청 창이 적혀 있다")
+    check("reverse" in w or "forward" in w or "Both" in w,
           f"{lo}~{hi}: 어느 쪽이 걸렸는지 적혀 있다",
-          next((s for s in ("reverse", "forward", "양쪽") if s in w), "-"))
+          next((s for s in ("reverse", "forward", "Both") if s in w), "-"))
 
 print("\n[4] 길이 제안이 실제로 동작하는 숫자다")
-w = next(x for x in hot["warn"].split(" | ") if "가장 가까운 쌍" in x)
+w = next(x for x in hot["warn"].split(" | ") if "closest pair" in x)
 import re
-m = re.search(r"상한을 (\d+) → (\d+)", w)
+m = re.search(r"upper bound from (\d+) to (\d+)", w)
 check(m is not None, "상한 제안이 들어 있다", w[-70:] if not m else f"{m.group(1)} → {m.group(2)}")
 if m:
     fixed = run("fixed", tm_min=64.0, tm_max=68.0, primer_len_max=int(m.group(2)))
-    check("가장 가까운 쌍" not in fixed["warn"],
+    check("closest pair" not in fixed["warn"],
           f"제안대로 상한을 {m.group(2)}로 올리면 경고가 사라진다",
           f"fwd {fixed['fwd_tm']:.2f}℃ / rev {fixed['rev_tm']:.2f}℃")
     check(64.0 <= fixed["fwd_tm"] <= 68.0 and 64.0 <= fixed["rev_tm"] <= 68.0,
           "fwd·rev 둘 다 요청 창 안으로 들어온다")
 
-m2 = re.search(r"하한을 (\d+) → (\d+)", next(
-    x for x in cold["warn"].split(" | ") if "가장 가까운 쌍" in x))
+m2 = re.search(r"lower bound from (\d+) to (\d+)", next(
+    x for x in cold["warn"].split(" | ") if "closest pair" in x))
 check(m2 is not None, "낮은 창에는 **하한** 제안이 나온다(방향이 반대다)",
       f"{m2.group(1)} → {m2.group(2)}" if m2 else "-")
 
 print("\n[5] 길이로 불가능하면 그렇다고 말한다")
 far = run("far", tm_min=70.0, tm_max=75.0)
-w3 = next(x for x in far["warn"].split(" | ") if "가장 가까운 쌍" in x)
-check("어디로 바꿔도" in w3, "도달 불가를 명시한다", w3[-60:])
+w3 = next(x for x in far["warn"].split(" | ") if "closest pair" in x)
+check("No annealing length" in w3, "도달 불가를 명시한다", w3[-60:])
 check("상한을" not in w3, "엉뚱한 길이 숫자를 제시하지 않는다")
 
 print("\n[6] 근접값이 기본값보다 요청에 가깝다")

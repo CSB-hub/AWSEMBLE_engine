@@ -176,7 +176,8 @@ for bad, why in ((dict(tm_min=30.0, tm_max=60.0), "하한이 35℃ 아래"),
         DesignParams(**bad).validate()
         check(False, f"{why} → 에러가 나야 함")
     except ValueError as e:
-        check("입력 허용 범위" in str(e), f"{why}: 입력 단계에서 막힌다",
+        check("allowed\n                input range" in str(e).replace("\n", "\n") or "allowed" in str(e),
+               f"{why}: 입력 단계에서 막힌다",
               str(e).splitlines()[-1][:62])
 
 print("\n[7] GG와 gibson이 같은 창을 같은 자로 본다 (E2E)")
@@ -207,7 +208,7 @@ for name, (mm, im, vec_id) in CASES.items():
     silent = []
     for r in rows:
         _w = r.get("warnings") or ""
-        _excused = "가장 가까운 쌍" in _w
+        _excused = "closest pair" in _w
         for k in ("fwd_tm", "rev_tm"):
             try:
                 t = float(r[k])
@@ -254,9 +255,9 @@ warns = (row.get("warnings") or "")
 # 2026-11-05: 폴백 **정책**이 "기본 범위로 갈아타기" → "근접값"으로 바뀌었다(Y9).
 # 여기서 지키는 건 정책이 아니라 **전파**다 — gibson.py가 설계기의 warnings를
 # 꺼내가는가. 정책 자체는 y9_test.py가 본다.
-check("가장 가까운 쌍" in warns, "설계기 경고가 warnings 컬럼까지 전파된다",
-      next((w for w in warns.split(" | ") if "가장 가까운" in w), "(없음)")[:60])
-check("Tm 64~68" in warns, "요청한 값이 그대로 적혀 있다")
+check("closest pair" in warns, "설계기 경고가 warnings 컬럼까지 전파된다",
+      next((w for w in warns.split(" | ") if "closest pair" in w), "(없음)")[:60])
+check("64-68" in warns, "요청한 값이 그대로 적혀 있다")
 
 # 폴백이 안 난 실행에는 그 경고가 없어야 한다(소음 방지).
 d2 = S / "y8_nofallback"

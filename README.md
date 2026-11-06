@@ -32,18 +32,17 @@ AWSEMBLE_engine  ──┬─→ AWSEMBLE (csbtools.dev/awsemble/)   ← submodu
   `tests/igem/test_all.py` 등은 거기서 돌린다.
 - **`develop_log/`** — 작업 기록 3.8G. 같은 위치에 있다.
 
-## 상류 — 단일 진실원천은 awsemble_dev다
+## 여기가 단일 진실원천이다 (2026-11-06부터)
 
-엔진 코드를 **여기서 처음 쓰지 않는다.** `BioCAD/Awsemble/awsemble_dev/BioCAD_private`
-(`BioCAD_private` 저장소의 `dev` 브랜치)에서 개발하고, 그 `awsemble/` 트리를 여기로
-동기화한다. 그래야 Galaxy 쪽 사본과 축이 어긋나지 않는다.
+엔진 코드는 **이 저장소에서 고친다.** 예전에는 `BioCAD/Awsemble/awsemble_dev`에서
+개발하고 여기로 동기화했지만, 2026-11-06부터 `Awsemble_csbtools`가 메인이 됐다.
 
-동기화할 때는 **커밋 메시지에 상류 커밋 해시를 적는다** — 이 저장소는 히스토리를
-새로 시작했으므로 git 조상 관계로는 상류와 대조할 수 없다. 해시가 유일한 단서다.
+`awsemble_dev`와 Galaxy의 `tools/awsemble/src`는 이제 **별개의 사본**이다 —
+여기를 고쳐도 그쪽은 안 바뀌고, 그 반대도 마찬가지다. 그쪽에 반영이 필요하면
+사람이 의식적으로 옮긴다.
 
-```
-MOD: 엔진 동기화 — synced from awsemble_dev <sha>
-```
+> ⚠️ `awsemble_dev`에서 여기로 덮어쓰는 동기화를 다시 하면 **이 저장소의 수정이
+> 사라진다**(영문화가 대표적이다). 되돌리는 방향으로 동기화할 때는 diff를 먼저 본다.
 
 ## 주의 — 소비자와 맞춰야 하는 값
 

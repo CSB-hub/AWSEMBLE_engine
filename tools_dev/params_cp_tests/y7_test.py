@@ -164,12 +164,12 @@ check(gc_tier(seq70, 0)[0] == "green", "기본창(20~80)에선 green")
 narrowed = DesignParams(gc_min=20.0, gc_max=60.0)
 t_n, _, m_n = gc_tier(seq70, 0, params=narrowed)
 check(t_n == "red", "상한을 60%로 내리면 같은 서열이 red", t_n)
-check(any("설정한" in x for x in m_n),
+check(any("you set" in x for x in m_n),
       "메시지가 '설정한 기준'임을 밝힌다", (m_n or [""])[0][:58])
 
 print(f"\n[7] 호출자가 창을 직접 주면 그것이 우선한다")
 r_called = ValidatePrimer().validate_primer(synth(40, 43.0), min_gc=0.45, params=prm)
-check(any("설정한 하한보다 낮습니다" in m for m in r_called["violations"]),
+check(any("below the floor you set" in m for m in r_called["violations"]),
       "호출자 하한(45%) 밖은 차단된다", f"GC {r_called['gc_content']:.1%}")
 check(len([m for m in r_called["violations"] + r_called["warnings"] if "GC" in m]) == 1,
       "GC 지적이 한 번만 나온다 (2층 시절 차단+경고 중복 제거)")
@@ -180,7 +180,7 @@ for kw in ({"gc_min": 0.4}, {"gc_max": 0.6}):
         DesignParams(**kw).validate()
         check(False, f"{kw} → 에러가 나야 함")
     except ValueError as e:
-        check("단위가" in str(e), f"{kw} 차단", str(e).splitlines()[-1][:70])
+        check("the unit is" in str(e), f"{kw} 차단", str(e).splitlines()[-1][:70])
 
 print(f"\n[10] 실제 케이스 E2E — mCherry + pRS425 (yeast HR)")
 if not SANDBOX.exists():
