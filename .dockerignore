@@ -1,0 +1,21 @@
+# 비밀번호는 이미지에 굽지 않고 런타임에 마운트
+.env
+*.env
+
+# 파이썬 캐시/빌드 산출물
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# 테스트 출력물 (컨테이너에서 새로 생성)
+tests/**/test_results/
+tests/**/all/
+tests/**/results/
+*.gb
+*.dna
+
+# 문서/가이드 (런타임 불필요)
+docs/
+CLAUDE.md
+*.md

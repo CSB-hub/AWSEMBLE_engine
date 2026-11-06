@@ -1,0 +1,16 @@
+# 엔진 저장소(AWSEMBLE_engine) — 소스와 문서, 테스트 스크립트만 추적한다.
+
+__pycache__/
+*.pyc
+*.bak
+*.bak_*
+
+# ⚠️ 절대 커밋하지 않는다 — Bioparts MySQL 접속 정보가 들어간다.
+#    (BioCAD_private 히스토리에는 b1af4a44에 이게 올라가 있다. 이 저장소를
+#     히스토리 없이 새로 시작한 이유가 그것이다.)
+.env
+*.env
+
+# 테스트 실행 산출물 — 11G짜리다. 원본은 BioCAD/Awsemble/awsemble_dev에 있고
+# backup.sh의 ARTIFACTS로 보관된다.
+tests/
