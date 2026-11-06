@@ -25,7 +25,9 @@ def design(prm):
             restriction_enzyme="BsaI", params=prm)
 d_def = design(None)
 d_salt = design(DesignParams(na_mM=200.0, primer_conc_nM=1000.0))
-chk("params 미지정 = 기본 동작", d_def["tm_na_mM"] == 50.0 and d_def["tm_primer_nM"] == 250.0)
+# 2026-11-05: 기본값이 NEB Q5 조건으로 바뀌었다(Na 0 / 500nM).
+chk("params 미지정 = 기본 동작(NEB Q5)",
+    d_def["tm_na_mM"] == 0.0 and d_def["tm_primer_nM"] == 500.0)
 chk("params 지정 시 조건 기록됨", d_salt["tm_na_mM"] == 200.0, f"Na={d_salt['tm_na_mM']}")
 chk("조건 바꾸면 Tm 값도 달라짐", abs(d_def["fwd_tm"] - d_salt["fwd_tm"]) > 0.3,
     f"{d_def['fwd_tm']:.2f} vs {d_salt['fwd_tm']:.2f}")

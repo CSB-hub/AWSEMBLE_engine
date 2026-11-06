@@ -203,7 +203,8 @@ class YeastHRCloning(GibsonCloning):
         from workflow.junction_plan import JUNCTION_UNIQUE_MAX_BP
 
         detail = "\n".join(
-            f"    · {a} ↔ {b}: {n}bp 공유" for a, b, n in plan.crosstalk_pairs[:6]
+            f"    · {a} ↔ {b}: {n}bp 공유 ({orient})"
+            for a, b, n, orient in plan.crosstalk_pairs[:6]
         )
         raise RuntimeError(
             f"yeast HR 설계 중단 — 인접하지 않은 fragment가 서열을 공유합니다"

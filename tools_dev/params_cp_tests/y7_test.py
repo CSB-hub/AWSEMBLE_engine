@@ -33,17 +33,25 @@ GC는 Tm과 사정이 하나 다르다 — **설계자가 고칠 수 없는 값*
 
 ## 수용 기준
 
-  1. 기본값에서 차단창이 설계창을 포함한다 + 소프트 경고가 하나도 안 뜬다
-  2. GC 28% anneal이 tail 유무와 **무관하게** 같은 등급이다(적/황 갈림 제거)
-  3. 설계창 안(20~80%)의 GC는 차단되지 않는다
-  4. 설계창 밖(>80%, <20%)은 여전히 차단된다
-  5. 이상 구간(40~60%) 안쪽은 GC 지적이 없다(경고도 소음이 되지 않는다)
-  6. 경고창이 차단창 밖으로 나가면 `validate()`가 **하드 에러**
-     (경고 없이 차단되는 구간 방지 — validate()는 워크플로우 진입점마다 호출된다)
-  7. 차단창이 설계창을 못 덮으면 `validate()`가 경고한다
-  8. 호출자가 min_gc/max_gc를 직접 주면 경고창이 그 안쪽으로 클램프된다
-  9. GC %/분수 단위 실수가 경고창 필드에서도 막힌다
- 10. 실제 케이스(mCherry + pRS425, yeast HR) E2E에서 GC 차단이 없다
+⚠️ **2026-11-05(Y11)에 처방이 뒤집혔다.** 위 진단(35%가 틀린 컷오프였다)은 그대로
+유효하지만, 처방인 "층을 둘로 나눈다"는 **폐기**했다 — 같은 2층 구조가 그 뒤 길이
+축에서 세 번째 같은 버그를 냈고(판정값이 `15`/`30` 리터럴이라 유저가 Q5 상한 26nt를
+골라도 경고는 30 기준으로 떴다), 무엇보다 **유저가 설정한 적 없는 기준으로 경고가
+떴다**(GC 이상구간 경고가 78행 중 39행, 50%). GC는 템플릿의 성질이라 그 경고를 봐도
+실험자가 할 수 있는 일이 없었다.
+
+→ Y11의 처방: **판정 기준은 유저 선언창 하나**(`gc_min/gc_max` 기본 20~80%).
+  경고는 "내가 설정한 범위를 벗어났을 때"만 뜬다. `qc_gc_*`·`qc_gc_ideal_*` 제거.
+
+  1. 판정 기준이 선언창과 **같은 숫자**다 (두 창이 어긋날 여지가 없다)
+  2. 기본값에서 소프트 경고가 하나도 안 뜬다
+  3. GC 28% anneal(원래 Y7이 yellow로 만든 값)이 이제 **조용하다** — 선언창 안이므로
+  4. 선언창 밖(>80%, <20%)은 여전히 지적된다
+  5. tail이 GC 계산에 섞이지 않는다 (운반자가 값을 바꾸지 않는다)
+  6. 선언창을 좁히면 지적이 **따라 움직인다** (기준이 유저 입력에 묶여 있다)
+  7. 호출자가 min_gc/max_gc를 직접 주면 그것이 우선한다
+  8. GC %/분수 단위 실수가 선언창 필드에서 막힌다
+  9. 실제 케이스(mCherry + pRS425, yeast HR) E2E에서 GC 차단이 없다
 
 실행: python tools_dev/params_cp_tests/y7_test.py
 """
@@ -103,74 +111,71 @@ def synth(n, gc_pct):
 
 prm = DesignParams()
 
-print(f"[1] 기본값: 차단창이 설계창을 포함 + 소프트 경고 없음")
-check(prm.qc_gc_min <= prm.gc_min and prm.qc_gc_max >= prm.gc_max,
-      "차단창 ⊇ 설계창",
-      f"차단 [{prm.qc_gc_min}, {prm.qc_gc_max}] ⊇ 설계 [{prm.gc_min}, {prm.gc_max}]")
-check(prm.qc_gc_min <= prm.qc_gc_ideal_min <= prm.qc_gc_ideal_max <= prm.qc_gc_max,
-      "경고창 ⊆ 차단창",
-      f"경고 [{prm.qc_gc_ideal_min}, {prm.qc_gc_ideal_max}]")
+print(f"[1] 판정 기준이 선언창과 같은 숫자다 + 기본값에 소프트 경고 없음")
+check(not hasattr(prm, "qc_gc_min") and not hasattr(prm, "qc_gc_ideal_min"),
+      "GC 2층(차단창·경고창)이 제거됐다")
+check((prm.gc_min, prm.gc_max) == (20.0, 80.0),
+      "선언창 하나만 남았다", f"[{prm.gc_min:g}, {prm.gc_max:g}]%")
+# 판정이 실제로 그 숫자를 쓰는지 — 경계 바로 안/밖으로 확인한다(필드만 보면 못 잡는다).
+_in = gc_tier(synth(40, 22.0), 0)
+_out = gc_tier(synth(40, 15.0), 0)
+check(_in[0] == "green" and _out[0] == "red",
+      "선언창 경계가 실제 판정 경계다", f"22%→{_in[0]} / 15%→{_out[0]}")
 warns = prm.validate()
 check(not warns, "기본값에서 소프트 경고가 하나도 없다 (소음 제거)", str(warns))
 
-print(f"\n[2] GC 28% anneal — tail 유무로 등급이 갈리지 않는다")
+print(f"\n[2] GC 28% anneal — 이제 조용하다 (Y7에선 yellow였다)")
 t_bare, gc_bare, m_bare = gc_tier(AT_ANNEAL, 0)
 t_tail, gc_tail, m_tail = gc_tier(TAIL40 + AT_ANNEAL, len(TAIL40))
 print(f"  끝단(tail 없음): {t_bare:<7} GC {gc_bare:.1%}")
 print(f"  tail 있음      : {t_tail:<7} GC {gc_tail:.1%}")
 check(t_bare == t_tail, "운반자와 무관하게 같은 등급", f"{t_bare} == {t_tail}")
-check(t_bare == "yellow", "둘 다 yellow (차단 아님, 숨김도 아님)", t_bare)
+check(not any("GC" in x for x in m_bare + m_tail),
+      "GC 지적이 없다 — 선언창 20~80% 안이므로",
+      str([x[:40] for x in m_bare + m_tail] or "지적 없음"))
 check(abs(gc_bare - gc_tail) < 1e-9, "tail이 GC 계산에 섞이지 않았다",
       f"{gc_bare:.3f} / {gc_tail:.3f}")
-# before 재현: 차단창만 되돌리면 끝단이 red가 된다 = 이 테스트가 지키는 회귀다
-old = DesignParams(qc_gc_min=35.0, qc_gc_max=60.0)
-t_old, _, _ = gc_tier(AT_ANNEAL, 0, params=old)
-check(t_old == "red", "차단창을 35%로 되돌리면 끝단이 red로 돌아간다(회귀 감시)", t_old)
+# before 재현: 선언창을 Y7 이전 값으로 좁히면 끝단이 red로 돌아간다 = 회귀 감시.
+#   Y7에선 `qc_gc_min`을 되돌려 재현했는데, 그 필드가 사라졌으므로 **선언창**으로 한다.
+#   기준이 유저 입력에 묶여 있다는 증거이기도 하다([6]과 같은 성질).
+old_win = DesignParams(gc_min=35.0, gc_max=60.0)
+t_old, _, _ = gc_tier(AT_ANNEAL, 0, params=old_win)
+check(t_old == "red", "선언창을 35~60%로 좁히면 끝단이 red가 된다(회귀 감시)", t_old)
 
-print(f"\n[3]~[5] GC 밴드별 등급")
-BANDS = [(15.0, "red", "설계창 밖(너무 낮음)"),
-         (28.0, "yellow", "설계창 안 / 이상 구간 밖"),
-         (50.0, "green", "이상 구간 안"),
-         (70.0, "yellow", "설계창 안 / 이상 구간 밖"),
-         (90.0, "red", "설계창 밖(너무 높음)")]
+print(f"\n[3]~[5] GC 밴드별 등급 — 선언창(20~80%) 하나로 갈린다")
+# ⚠️ Y7의 밴드 표에서 28%·70%가 yellow → **green**으로 바뀌었다. 이상 구간(40~60%)
+#   경고층을 없앴기 때문이고, 그게 이 작업의 목적이다(유저가 설정한 적 없는 기준).
+BANDS = [(15.0, "red", "선언창 밖(너무 낮음)"),
+         (28.0, "green", "선언창 안 — Y7에선 yellow였다"),
+         (50.0, "green", "선언창 안"),
+         (70.0, "green", "선언창 안 — Y7에선 yellow였다"),
+         (90.0, "red", "선언창 밖(너무 높음)")]
 for pct, want, why in BANDS:
     seq = synth(40, pct)
     got, gc, msgs = gc_tier(seq, 0)
     check(got == want, f"GC {gc:.0%} → {want} ({why})",
           f"got={got}" + (f" / {msgs[0][:48]}" if msgs else ""))
 
-print(f"\n[6] 경고창이 차단창 밖이면 하드 에러")
-# 하드 검증은 `validate()`가 한다 — 워크플로우 진입점마다 호출된다
-# (`builder` build_plasmid/build_multimodule_plasmid/insert, `base.run_plan`,
-#  galaxy `vector_insertion_helper`). 생성자는 검증하지 않는다.
-for kw in ({"qc_gc_ideal_min": 10.0}, {"qc_gc_ideal_max": 95.0}):
-    try:
-        DesignParams(**kw).validate()
-        check(False, f"{kw} → 에러가 나야 함")
-    except ValueError as e:
-        check("경고창" in str(e) and "차단창" in str(e), f"{kw} 차단",
-              str(e).splitlines()[-1][:70])
+print(f"\n[6] 선언창을 좁히면 지적이 따라 움직인다 (기준이 유저 입력에 묶여 있다)")
+# 같은 서열(GC 70%)을 창만 바꿔 두 번 본다 — 2층 시절엔 유저가 창을 바꿔도
+# 판정창이 그대로라 등급이 안 움직였다. 그게 Y11이 고친 것이다.
+seq70 = synth(40, 70.0)
+check(gc_tier(seq70, 0)[0] == "green", "기본창(20~80)에선 green")
+narrowed = DesignParams(gc_min=20.0, gc_max=60.0)
+t_n, _, m_n = gc_tier(seq70, 0, params=narrowed)
+check(t_n == "red", "상한을 60%로 내리면 같은 서열이 red", t_n)
+check(any("설정한" in x for x in m_n),
+      "메시지가 '설정한 기준'임을 밝힌다", (m_n or [""])[0][:58])
 
-print(f"\n[7] 차단창이 설계창을 못 덮으면 경고")
-w = DesignParams(qc_gc_min=35.0, qc_gc_max=60.0).validate()
-hit = next((x for x in w if "GC 차단창" in x), None)
-check(hit is not None, "포함 관계 위반을 경고한다", (hit or "(경고 없음)")[:70])
-check(not any("GC 차단창" in x for x in DesignParams().validate()),
-      "기본값(20~80 ⊇ 20~80)은 경고 없음")
+print(f"\n[7] 호출자가 창을 직접 주면 그것이 우선한다")
+r_called = ValidatePrimer().validate_primer(synth(40, 43.0), min_gc=0.45, params=prm)
+check(any("설정한 하한보다 낮습니다" in m for m in r_called["violations"]),
+      "호출자 하한(45%) 밖은 차단된다", f"GC {r_called['gc_content']:.1%}")
+check(len([m for m in r_called["violations"] + r_called["warnings"] if "GC" in m]) == 1,
+      "GC 지적이 한 번만 나온다 (2층 시절 차단+경고 중복 제거)")
 
-print(f"\n[8] 호출자가 차단창을 직접 주면 경고창이 클램프된다")
-# min_gc=0.45로 좁히면 경고창 하한 40%는 45%로 당겨져야 한다
-# → GC 50%는 green, GC 47%는 차단창 안이지만 경고창 밖이라 yellow가 아니라 green이어야
-#   하는 게 아니라, 45% 하한이 적용돼 47%는 green, 43%는 red(차단창 밖)다.
-t43, gc43, _ = gc_tier(synth(40, 43.0), 0, params=prm)
-r_clamped = ValidatePrimer().validate_primer(synth(40, 43.0), min_gc=0.45, params=prm)
-check(any("너무 낮습니다" in m for m in r_clamped["violations"]),
-      "호출자 하한(45%) 밖은 차단된다", f"GC {r_clamped['gc_content']:.1%}")
-check(not any("이상 구간" in m for m in r_clamped["warnings"]),
-      "차단과 경고가 겹쳐 두 번 나오지 않는다")
-
-print(f"\n[9] GC 단위 실수(0~1 분수) 방어가 경고창에도 걸린다")
-for kw in ({"qc_gc_ideal_min": 0.4}, {"qc_gc_ideal_max": 0.6}):
+print(f"\n[8] GC 단위 실수(0~1 분수) 방어가 선언창에도 걸린다")
+for kw in ({"gc_min": 0.4}, {"gc_max": 0.6}):
     try:
         DesignParams(**kw).validate()
         check(False, f"{kw} → 에러가 나야 함")
@@ -205,12 +210,17 @@ else:
     row = rows[0]
     viol = row.get("violations") or ""
     check("GC%" not in viol, "GC로 차단된 프라이머 없음", f"violations={viol or '없음'}")
-    check(float(row["rev_gc"]) < prm.qc_gc_ideal_min,
-          "rev는 여전히 이상 구간 밖이다(신호가 사라지지 않았다)",
-          f"rev_gc={row['rev_gc']}% < {prm.qc_gc_ideal_min}%")
-    check("이상 구간보다 낮습니다" in (row.get("warnings") or ""),
-          "그 사실이 경고로 남아 있다")
-    check(row.get("tier") == "yellow", "tier=yellow", f"tier={row.get('tier')}")
+    # ⚠️ Y11 — rev의 GC는 여전히 낮지만(28%대) 그건 **선언창 20~80% 안**이므로
+    #   더 이상 경고가 아니다. 숫자는 시트에 그대로 남아 실험자가 볼 수 있다.
+    _rev_gc = float(row["rev_gc"])
+    check(prm.gc_min <= _rev_gc <= prm.gc_max,
+          "rev GC가 선언창 안이다", f"rev_gc={_rev_gc}% ⊆ {prm.gc_min:g}~{prm.gc_max:g}%")
+    check("GC%" not in (row.get("warnings") or ""),
+          "선언창 안이므로 GC 경고가 없다 (유저가 설정한 적 없는 기준으로 경고하지 않는다)",
+          (row.get("warnings") or "경고 없음")[:60])
+    check(_rev_gc < 40.0,
+          "숫자 자체는 시트에 남아 있다 (신호를 지운 게 아니라 경고에서 뺀 것)",
+          f"rev_gc={_rev_gc}%")
 
 print("\n" + "=" * 72)
 if FAIL:

@@ -27,6 +27,27 @@ from pydna.dseqrecord import Dseqrecord
 from .classical_assemble import ClassicalWorkflow
 
 
+class _CrossAware(list):
+    """설계 결과 리스트 + **쌍 단위** 교차 검사 결과를 같이 운반한다.
+
+    `primers.csv`는 행이 부품 하나라 "부품 A ↔ 부품 C" 같은 쌍 결과를 담을 자리가
+    없다. 그렇다고 `_prep_module_records`의 반환 서명을 바꾸면 호출부 3곳이 전부
+    움직이고, 쌍 결과는 **run 단위**라 design 행에 넣는 것도 맞지 않다.
+    → 리스트 자체에 붙인다. 호출부는 지금처럼 `records, design = ...`로 받고,
+      리포트를 쓸 때만 `getattr(design, "cross_dimers", [])`로 꺼낸다.
+
+    Attributes:
+        cross_dimers: one-pot 프라이머 결합부끼리 dimer (Golden Gate 경로)
+        crosstalk_pairs: 비인접 fragment 공유 서열 (Gibson / yeast HR 경로)
+        scans: `[(scope, kind, 검사한 쌍 수), ...]` — **무엇을 몇 쌍 봤는지**.
+            걸린 쌍이 0일 때 "검사했고 깨끗하다"를 말하려면 분모가 있어야 한다.
+    """
+
+    cross_dimers = ()
+    crosstalk_pairs = ()
+    scans = ()
+
+
 class WorkflowBuilder:
     """
     워크플로우 생성 통합 인터페이스
@@ -155,8 +176,10 @@ class WorkflowBuilder:
             with open(rp / "vector_primers.csv", "w", newline="", encoding="utf-8") as f:
                 w = _csv.writer(f)
                 w.writerow(["insert", "method", "forward", "reverse",
-                            "fwd_len", "rev_len", "amplicon_len", "note"])
-                w.writerow([insert.name, "gibson", "", "", 0, 0, len(insert.seq),
+                            "fwd_mer", "rev_mer", "fwd_tm", "rev_tm", "ta",
+                            "tm_diff", "amplicon_len", "note"])
+                w.writerow([insert.name, "gibson", "", "", 0, 0, "", "", "", "",
+                            len(insert.seq),
                             "삽입 프라이머 불필요 — module 양 끝이 이미 vector homology입니다 "
                             "(spacer_mode=vector_homology). 주문할 삽입용 프라이머가 없습니다."])
             return
@@ -172,10 +195,31 @@ class WorkflowBuilder:
 
         rp = base / "reports"
         rp.mkdir(parents=True, exist_ok=True)
+        # 2026-11-05(Y10-b) — 주문 시트에 필요한 건 서열만이 아니다.
+        #   `fwd_mer`/`rev_mer`: 주문 단위(몇-mer). 서열을 눈으로 세게 하면 오발주가 난다.
+        #   `fwd_tm`/`rev_tm`  : **anneal 기준**(tail 제외) — 설계기가 계산한 값을 그대로 쓴다.
+        #   `ta`               : 권장 annealing 온도. 제품 규칙(`NEB_TA_RULES`)이 정한다.
+        #                        프리셋 조성과 다르면 추측하지 않고 비운다.
+        #   `tm_diff`          : fwd·rev Tm 차이(Y11). `ta`가 **낮은 쪽 기준**이라
+        #                        이 값이 크면 뜨거운 쪽이 자기 Tm보다 낮은 온도에서 돈다.
+        _dsg = getattr(gib, "last_primer_design", None) or {}
+        _tf, _tr = _dsg.get("fwd_tm"), _dsg.get("rev_tm")
+        _prm = gib.params
+        _ta = None
+        if isinstance(_tf, (int, float)) and isinstance(_tr, (int, float)):
+            _ta = _prm.ta_recommended(_tf, _tr)
+        _td = abs(_tf - _tr) if isinstance(_tf, (int, float)) and isinstance(_tr, (int, float)) else None
+
+        def _r(x, nd=2):
+            return round(x, nd) if isinstance(x, (int, float)) else ""
+
         with open(rp / "vector_primers.csv", "w", newline="", encoding="utf-8") as f:
             w = _csv.writer(f)
-            w.writerow(["insert", "method", "forward", "reverse", "fwd_len", "rev_len", "amplicon_len"])
-            w.writerow([insert.name, "gibson", fwd, rev, len(fwd), len(rev), len(pcr.seq)])
+            w.writerow(["insert", "method", "forward", "reverse",
+                        "fwd_mer", "rev_mer", "fwd_tm", "rev_tm", "ta",
+                        "tm_diff", "amplicon_len"])
+            w.writerow([insert.name, "gibson", fwd, rev, len(fwd), len(rev),
+                        _r(_tf), _r(_tr), _r(_ta, 1), _r(_td, 1), len(pcr.seq)])
 
     @staticmethod
     def _insert_arm(insert_method: str, params) -> int:
@@ -250,6 +294,14 @@ class WorkflowBuilder:
             # 기대 서열(오라클)을 design에 실어 보낸다 — 조립 결과 대조에 쓸 수 있다.
             for d in design:
                 d["module_seq_expected"] = plan.module_seq
+            # 비인접 fragment 공유 서열(쌍 단위) — reports/cross_checks.csv로 나간다.
+            #   yeast는 `YeastHRCloning._check_plan`이 이미 하드 차단했으므로 여기까지
+            #   오면 Gibson 트랙이다. 쌍 결과는 run 단위라 design 행에 담을 자리가
+            #   없어서 **리스트 객체에 속성으로** 붙인다(호출부 3곳의 서명을 안 바꾼다).
+            design = _CrossAware(design)
+            design.crosstalk_pairs = list(plan.crosstalk_pairs)
+            design.scans = [("", "junction_crosstalk",
+                             getattr(plan, "crosstalk_checked", 0))]
             return plan.records(), design
 
         # 효소와 설계 조건을 그대로 넘긴다(안 넘기면 기본값으로 돌아 유저 입력이 무시된다).
@@ -267,7 +319,47 @@ class WorkflowBuilder:
             r.annotations["part_id"] = res.get("part_id", "")
             r.annotations["part_type"] = res.get("part_type", "")
             records.append(r)
+        design = _CrossAware(design)
+        design.cross_dimers = list(getattr(gg, "last_cross_dimers", []) or [])
+        design.scans = [("", "primer_dimer",
+                         getattr(gg, "last_cross_dimer_pairs", 0))]
         return records, design
+
+    @staticmethod
+    def _write_cross_checks(wf, design, params=None) -> int:
+        """`reports/cross_checks.csv`를 쓴다 — **검사가 돌았으면** 결과가 0이어도 쓴다.
+
+        쌍 단위 결과는 `_CrossAware` 리스트에 속성으로 실려 온다(그 클래스 독스트링 참고).
+
+        ⚠️ 2026-11-06까지는 걸린 쌍이 0이면 파일을 안 만들었다. 의도는 "빈 파일은
+        깨끗함과 미검사가 구분 안 된다"였는데, Galaxy 출력은 파일이 있어야 해서
+        **헤더만 있는 파일**이 유저에게 나갔고 결국 같은 모호함이 생겼다. 지금은
+        반대로 간다 — 검사가 돌았으면 `..._summary` 행에 "N쌍 중 0쌍"을 적어 파일
+        자체가 답하게 한다. 검사가 아예 없었을 때만 파일이 없다.
+
+        Args:
+            wf: WorkflowBase 인스턴스(출력 경로를 안다)
+            design: `_prep_module_records`가 돌려준 설계 결과 리스트
+            params: 요약 행에 적을 기준값(ΔG 경계 등)
+
+        Returns:
+            쓴 행 수 (0이면 파일 없음)
+        """
+        xd = list(getattr(design, "cross_dimers", []) or [])
+        xt = list(getattr(design, "crosstalk_pairs", []) or [])
+        sc = list(getattr(design, "scans", []) or [])
+        # 단일 module 경로는 반응이 하나다 — scope를 비워두면 "범위 불명"으로 읽힌다.
+        xd = [h if h.get("scope") else {**h, "scope": "module 1/1"} for h in xd]
+        xt = [t if len(t) > 4 else tuple(t) + ("module 1/1",) for t in xt]
+        sc = [s if s[0] else ("module 1/1",) + tuple(s[1:]) for s in sc]
+        if not xd and not xt and not sc:
+            return 0
+        out = wf.project_dir / "reports" / "cross_checks.csv"
+        cnt = wf.write_cross_checks_csv(out, cross_dimers=xd, crosstalk_pairs=xt,
+                                        scans=sc, params=params)
+        if cnt:
+            print(f"  📄 교차 검사 {cnt}행 → reports/cross_checks.csv")
+        return cnt
 
     @staticmethod
     def build_plasmid(
@@ -399,6 +491,7 @@ class WorkflowBuilder:
             WorkflowBuilder._save_gibson_prepared(project_dir, results[0]["record"], vector, "modules",
                                                   params=prm)
         wf.write_primer_csv(design)   # module 조립 프라이머 → reports/primers.csv (주문용)
+        WorkflowBuilder._write_cross_checks(wf, design, params=prm)
         wf.save_report()
 
         return {
@@ -482,6 +575,7 @@ class WorkflowBuilder:
                 project_dir, results[-2]["record"], vector, "modules", params=prm
             )
         wf.write_primer_csv(design)
+        WorkflowBuilder._write_cross_checks(wf, design, params=prm)
         wf.save_report()
 
         return {
@@ -577,6 +671,7 @@ class WorkflowBuilder:
         asm_type = "circular" if circular else "linear"
 
         records_list, all_designs, spacer_pairs = [], [], []
+        _xd, _xt, _sc = [], [], []   # 쌍 단위 교차 검사 결과·분모(module별로 모은다)
         for i, g in enumerate(module_groups):
             parts_sp = selector.attach(g, bound_items[i], bound_items[i + 1])
             recs, design = WorkflowBuilder._prep_module_records(
@@ -588,6 +683,18 @@ class WorkflowBuilder:
             records_list.append(recs)
             spacer_pairs.append([parts_sp[0], parts_sp[-1]])   # excision PCR 앵커
             all_designs.extend(design)
+            # 쌍 결과는 리스트 속성에 실려 오므로 extend로는 안 따라온다 — 따로 합친다.
+            #   ⚠️ module마다 **다른 튜브**다(교차 dimer는 one-pot 범위 안에서만 의미가
+            #     있다). module 간 쌍을 새로 만들지 않고, **어느 반응인지 scope로 태깅**해
+            #     모은다 — `part_name`이 module 간에 겹쳐서(실측: 2-module에서
+            #     `BBa_J23100_1_designed`가 두 번) 태그 없이는 합친 파일에서 구분이 안 된다.
+            _scope = f"module {i + 1}/{len(module_groups)}"
+            for _h in (getattr(design, "cross_dimers", []) or []):
+                _xd.append({**_h, "scope": _scope})
+            for _t in (getattr(design, "crosstalk_pairs", []) or []):
+                _xt.append(tuple(_t) + (_scope,))
+            for _s in (getattr(design, "scans", []) or []):
+                _sc.append((_scope,) + tuple(_s[1:]))
             WorkflowBuilder._save_parts(project_dir, parts_sp, recs)   # parts/raw + parts/gg_prepared
 
         # 3) run_plan: module_assembly×N (→ module_excision×N) → multimodule_assembly → vector_insertion
@@ -651,6 +758,11 @@ class WorkflowBuilder:
             WorkflowBuilder._save_gibson_prepared(project_dir, results[-2]["record"], vector, "multimodules",
                                                   params=prm)
         wf.write_primer_csv(all_designs)   # 모든 module 조립 프라이머 → reports/primers.csv (주문용)
+        _merged = _CrossAware(all_designs)
+        _merged.cross_dimers = _xd
+        _merged.crosstalk_pairs = _xt
+        _merged.scans = _sc
+        WorkflowBuilder._write_cross_checks(wf, _merged, params=prm)
         wf.save_report()
 
         return {

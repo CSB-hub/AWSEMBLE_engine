@@ -53,8 +53,15 @@ has = [x for x in e1 if isinstance(x.get("params"), dict) and "design_params" in
 chk("design_params 기록됨", len(has) > 0, f"{len(has)}/{len(e1)} 엔트리")
 if has:
     dp = has[0]["params"]["design_params"]
-    chk("Tm 조건 복원 가능", dp.get("na_mM") == 50.0 and (dp.get("tm_min"), dp.get("tm_max")) == (55.0, 65.0),
-        f"tm=[{dp.get('tm_min')},{dp.get('tm_max')}], na={dp.get('na_mM')}, enzyme={dp.get('gg_enzyme')}")
+    # 2026-11-05 Y10 — Tm 축을 NEB Tm Calculator 재현으로 바꾸면서 완충액 기본값이 바뀌었다.
+    #   예전: na_mM=50 (Biopython 관용 기본값)
+    #   지금: NEB Q5 조성 → na_mM=0, k_mM=50, tris_mM=10 (1가 염은 K/Tris가 담당)
+    # 여기서 보는 건 "완충액 축이 manifest로 복원되는가"이므로 기준값만 갈아끼운다.
+    chk("Tm 조건 복원 가능",
+        dp.get("na_mM") == 0.0 and dp.get("k_mM") == 50.0
+        and (dp.get("tm_min"), dp.get("tm_max")) == (55.0, 65.0),
+        f"tm=[{dp.get('tm_min')},{dp.get('tm_max')}], na={dp.get('na_mM')}, "
+        f"k={dp.get('k_mM')}, enzyme={dp.get('gg_enzyme')}")
 
 print("\n=== CP6:", "통과" if ok else "실패", "===")
 sys.exit(0 if ok else 1)

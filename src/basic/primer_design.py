@@ -36,6 +36,258 @@ from .secondary_structure import (
 
 import primer3
 
+#: primer3에서 받아올 후보 쌍 수. 5' 시작이 고정이면 길이만 변하므로
+#  길이창 폭(보통 8)보다 넉넉하면 충분하다. 우리 축으로 고르려면 후보가 여럿이어야 한다.
+PRIMER3_NUM_RETURN = 30
+
+#: 길이 힌트 탐색(`_length_hint`) 전용 후보 수. 여기서 필요한 답은 "한 쌍이라도
+#  창에 드는가" 뿐이라 후보를 많이 받을 이유가 없다. 설계 본체(위 30)와 달리
+#  **고를 필요가 없으므로** 줄여서 실패 경로의 비용을 깎는다.
+_HINT_NUM_RETURN = 8
+
+#: 길이 힌트 탐색의 굵은 격자 간격(nt). 1nt씩 전수로 훑으면 길이창 끝까지
+#  최대 ~20회 primer3를 돌려 체감이 멈춘다. 굵게 훑어 구간만 잡고 그 구간만
+#  되짚으면 같은 답을 2~6회로 얻는다.
+_HINT_COARSE_STEP = 4
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 설계 범위를 못 맞췄을 때 **왜 그런지 / 무엇을 바꾸면 되는지** 를 만든다.
+#
+# 막연히 "범위를 넓혀 보세요"가 아니라 primer3가 직접 말해주는 사실과 실제 탐색으로
+# 구한 숫자만 쓴다. 2026-11-05까지는 요청 범위를 못 맞추면 그냥 기본값으로 갈아타고
+# "기본 범위로 설계했습니다"라고만 알려서, 유저는 **무엇을 바꿔야 할지 알 수 없었다.**
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _explain_shortfall_axis(tm_fwd: float, tm_rev: float,
+                            lo: float, hi: float) -> str:
+    """어느 쪽이 왜 창을 못 맞췄는지 — **우리가 잰 값으로** 만든다.
+
+    2026-11-05 오전까지는 primer3의 `PRIMER_LEFT_EXPLAIN`을 읽어 사유를 만들었다.
+    지금은 primer3에 Tm 창을 걸지 않으므로(그쪽은 후보 생성만 한다) EXPLAIN에 Tm
+    실패가 찍히지 않는다. 대신 **선택된 쌍의 실제 Tm**으로 판단한다 — 추론이 아니라
+    보고하는 숫자 그대로라 시트와 어긋날 수가 없다.
+    """
+    f_out = tm_fwd < lo or tm_fwd > hi
+    r_out = tm_rev < lo or tm_rev > hi
+    if f_out and r_out:
+        side = "양쪽 모두"
+    elif r_out:
+        side = "reverse 쪽이"
+    elif f_out:
+        side = "forward 쪽이"
+    else:
+        return ""
+    outs = [t for t, o in ((tm_fwd, f_out), (tm_rev, r_out)) if o]
+    if all(t < lo for t in outs):
+        why = "Tm이 요청 범위보다 낮습니다(결합부가 짧아서)"
+    elif all(t > hi for t in outs):
+        why = "Tm이 요청 범위보다 높습니다(결합부가 길어서)"
+    else:
+        why = "한쪽은 낮고 한쪽은 높아 한 창에 같이 넣을 수 없습니다"
+    return f"{side} 범위를 못 맞췄습니다 — {why}."
+
+
+def _length_hint(settings: Dict, prm, lo: float, hi: float) -> str:
+    """요청 Tm을 **맞출 수 있는 결합부 길이**를 실제 탐색으로 찾아 알려준다.
+
+    길이창(`primer_len_min`~`primer_len_max`, GUI의 "Annealing length")이 Tm 도달을
+    막는 숨은 제약인 경우가 많다. 상한을 올려 되는지 먼저 보고, 안 되면 하한을 내려 본다
+    (낮은 Tm을 원할 땐 **줄여야** 한다 — 방향이 반대다).
+
+    ⚠️ 판정은 **우리 축**(`calculate_tm`)으로 한다. primer3에 Tm 창을 걸어 판정하면
+    축이 갈려서, 제안대로 바꿔도 경고가 안 사라지는 일이 생긴다.
+    primer3 호출이 몇 번 더 들어가지만 **창을 못 맞춘 실패 경로에서만** 돈다.
+    """
+    from params import PRIMER3_MAX_SIZE
+
+    def feasible(lmin, lmax):
+        st = dict(settings)
+        st.update({"PRIMER_MIN_SIZE": lmin, "PRIMER_MAX_SIZE": lmax,
+                   "PRIMER_OPT_SIZE": min(max(prm.primer_len_opt, lmin), lmax),
+                   "PRIMER_NUM_RETURN": _HINT_NUM_RETURN})
+        try:
+            r = primer3.bindings.design_primers(st, {})
+        except Exception:
+            return False
+        for i in range(r.get("PRIMER_PAIR_NUM_RETURNED", 0)):
+            tf = calculate_tm(r[f"PRIMER_LEFT_{i}_SEQUENCE"], **prm.tm_kwargs())
+            tr = calculate_tm(r[f"PRIMER_RIGHT_{i}_SEQUENCE"], **prm.tm_kwargs())
+            if lo <= tf <= hi and lo <= tr <= hi:
+                return True
+        return False
+
+    def first_feasible(cands, make_window):
+        """`cands`를 앞에서부터 보며 **처음 되는 값**을 찾는다 — 굵게 훑고 되짚는 방식.
+
+        1nt씩 전수로 보면 같은 답에 최대 ~20회 primer3가 들어간다. 길이창을 넓히면
+        후보 집합은 커지기만 하므로 "되던 게 더 넓혀서 안 될" 일은 없다(단조). 그래서
+        `_HINT_COARSE_STEP` 간격으로 먼저 되는 지점을 잡고, **직전 실패 지점과 그
+        사이만** 1칸씩 되짚으면 전수와 같은 최소값을 2~6회로 얻는다.
+        """
+        hit = None
+        last_no = -1
+        # 격자를 **0번부터** 놓는다 — 실제로 필요한 변경은 보통 1~2nt라
+        # 첫 칸이 곧 답인 경우가 가장 흔하고, 그 경우 호출 1회로 끝난다.
+        for i in range(0, len(cands), _HINT_COARSE_STEP):
+            if feasible(*make_window(cands[i])):
+                hit = i
+                break
+            last_no = i
+        if hit is None:
+            # 굵은 격자가 끝까지 못 짚었을 수 있다(격자에 안 걸린 꼬리 구간) → 끝만 확인
+            if not cands or not feasible(*make_window(cands[-1])):
+                return None
+            hit = len(cands) - 1
+        for j in range(last_no + 1, hit):
+            if feasible(*make_window(cands[j])):
+                return cands[j]
+        return cands[hit]
+
+    lo0, hi0 = prm.primer_len_min, prm.primer_len_max
+    _FLOOR = 10          # 이보다 짧으면 특이성이 깨져 PCR 자체가 성립하지 않는다
+
+    lmax = first_feasible(list(range(hi0 + 1, PRIMER3_MAX_SIZE + 1)),
+                          lambda v: (lo0, v))
+    if lmax is not None:
+        return (f"결합부 길이(Annealing length) **상한을 {hi0} → {lmax}** 로 올리면 "
+                f"요청 범위를 맞출 수 있습니다.")
+    lmin = first_feasible(list(range(lo0 - 1, _FLOOR - 1, -1)),
+                          lambda v: (v, hi0))
+    if lmin is not None:
+        return (f"결합부 길이(Annealing length) **하한을 {lo0} → {lmin}** 로 내리면 "
+                f"요청 범위를 맞출 수 있습니다(낮은 Tm은 짧게 가야 합니다).")
+    return (f"결합부 길이를 {_FLOOR}~{PRIMER3_MAX_SIZE}nt 어디로 바꿔도 이 서열에서는 "
+            f"요청 Tm에 닿지 않습니다 — Tm 범위를 조정해 주세요.")
+
+
+def check_pair_tm_diff(fwd_tm, rev_tm, params=None):
+    """fwd·rev **두 프라이머 사이**의 Tm 차이를 선언창(`pair_tm_diff_max`)과 비교한다.
+
+    `tm_diff_max`와 혼동하지 않도록 — 그쪽은 **같은 프라이머**의 anneal Tm과 전체
+    프라이머(5' tail 포함) Tm의 차이이고, GG 프라이머 길이를 정하는 knob이다.
+    이쪽은 쌍 사이의 차이이고, **annealing 온도 하나로 두 프라이머를 돌릴 수 있는가**를
+    본다: `ta_recommended()`가 Ta를 **낮은 쪽 Tm 기준**으로 정하므로 차이가 벌어지면
+    뜨거운 쪽이 자기 Tm보다 훨씬 낮은 온도에서 돌아 비특이 결합이 늘어난다.
+
+    설계기 두 곳(`design_basic_primers` · `design_goldengate_primers`)이 같은 자를
+    쓰도록 여기 한 벌만 둔다.
+
+    Args:
+        fwd_tm: forward 프라이머 Tm (℃)
+        rev_tm: reverse 프라이머 Tm (℃)
+        params: DesignParams (None이면 DEFAULT_PARAMS)
+
+    Returns:
+        선언창을 벗어나면 경고 문자열, 아니면 None
+    """
+    from params import DEFAULT_PARAMS
+    _p = params or DEFAULT_PARAMS
+    if not isinstance(fwd_tm, (int, float)) or not isinstance(rev_tm, (int, float)):
+        return None
+    diff = abs(fwd_tm - rev_tm)
+    if diff <= _p.pair_tm_diff_max:
+        return None
+    _ta = _p.ta_recommended(fwd_tm, rev_tm)
+    _hot = "forward" if fwd_tm > rev_tm else "reverse"
+    _msg = (f"fwd·rev Tm 차이가 설정한 상한보다 큽니다 "
+            f"({diff:.1f}℃ > {_p.pair_tm_diff_max:g}℃ — "
+            f"fwd {fwd_tm:.1f}℃ / rev {rev_tm:.1f}℃)")
+    if _ta is not None:
+        _msg += (f" — annealing 온도는 낮은 쪽 기준 {_ta:.1f}℃로 정해지므로 "
+                 f"{_hot} 프라이머가 자기 Tm보다 낮은 온도에서 돌아 "
+                 f"비특이 결합이 늘 수 있습니다")
+    return _msg
+
+
+class _DimerScan(list):
+    """`check_cross_dimers`의 결과 — 걸린 쌍 리스트에 **검사한 쌍 수**를 달아 보낸다.
+
+    빈 리스트만 돌려주면 "검사했는데 깨끗하다"와 "검사를 안 했다"가 구분이 안 된다.
+    분모(`pairs_checked`)가 있어야 리포트가 "12쌍 중 0쌍"이라고 쓸 수 있다.
+    (리스트를 상속하므로 기존 호출부의 `len()`·반복·인덱싱은 그대로 동작한다)
+    """
+
+    pairs_checked = 0
+
+
+def check_cross_dimers(anneals, params=None):
+    """한 반응에 같이 들어가는 프라이머들의 **결합부끼리** dimer를 전수 검사한다.
+
+    ## 왜 결합부만 보는가
+
+    one-pot Golden Gate는 부품 n개의 프라이머 2n개가 **같은 튜브**에 들어간다.
+    4부품이면 8개 = 28쌍인데, 지금까지는 자기 쌍(fwd↔rev) 4쌍만 봤다.
+    그러나 **전체 프라이머로 전수 검사하면 소음이 된다** — GG 프라이머는 전부 같은
+    5' tail(`[패딩][인식서열][spacer]`)을 공유하고, 그 tail만으로 이미 기준을 넘는다
+    (이 프로젝트 실측: tail 12bp 단독 self ΔG −7.44 / 역상보와 −10.82, 기준 −5.0).
+    2026-10-20에 ΔG 경고를 화면에서 뺀 이유가 바로 이것이었다(51개 중 50개 = 98%에
+    경고가 붙어 정보가 되지 못했다).
+
+    그래서 **tail을 뺀 결합부끼리만** 비교한다. 결합부는 overhang·spacer 선정이나
+    결합부 길이 재조정으로 **실제로 바꿀 수 있는** 값이라, 걸리면 손쓸 수 있다.
+
+    ## 등급을 둘로 나눈다 — 실측으로 재조정했다
+
+    처음엔 `qc_dimer_dg`(−5.0) 하나로 전부 차단했는데, 실측하니 **39행 중 24행(62%)이
+    red**가 됐다(쌍 35건, ΔG 중앙 −5.85). 2026-10-20에 ΔG 경고를 화면에서 뺀 상황이
+    그대로 재현된 것이다 — 기본값에서 과반이 뜨는 신호는 정의상 정보가 아니다.
+
+    그래서 이 프로젝트가 **이미 가진 ΔG 어휘**를 그대로 쓴다(새 숫자를 만들지 않는다):
+
+    | ΔG | 등급 | 처리 |
+    |---|---|---|
+    | ≤ `qc_dg_absolute` (−9.0) | 강한 dimer | **차단**(violation) — 실측 35건 중 3건 |
+    | ≤ `qc_dimer_dg` (−5.0) | 중간 dimer | 기록만 — `cross_checks.csv`에 남기고 행은 안 건드린다 |
+
+    차단을 `qc_dg_absolute`에 두는 근거: 그 필드가 원래 "위치·형태 불문 최상위 경고
+    tier"로 정의돼 있고, `check_primer_dimer` 독스트링의 등급표에서도 −9가 "강한
+    dimer" 경계다. tail 유래 dimer는 고칠 수 없어 경고로 두는데(`warn_only_dimer`),
+    결합부끼리 붙는 것은 고칠 수 있고 증폭 효율을 직접 깎으므로(프라이머가 서로 붙어
+    있으면 주형에 못 간다) 강한 등급은 차단으로 올린다.
+
+    Args:
+        anneals: `[(라벨, 결합부 서열), ...]` — 한 반응에 같이 들어가는 것만.
+            라벨은 리포트에 그대로 나가므로 `"BBa_C0012_3_designed fwd"` 처럼
+            사람이 읽을 수 있어야 한다.
+        params: DesignParams (None이면 DEFAULT_PARAMS).
+            `qc_dimer_dg`(기록 경계)와 `qc_dg_absolute`(차단 경계)를 쓴다.
+
+    Returns:
+        `_DimerScan` — 걸린 쌍 리스트 `[{'a','b','delta_g','blocking','detail'}, ...]`에
+        `pairs_checked`(실제로 비교한 쌍 수)가 달려 있다. `blocking`이 True면 차단
+        등급이다. ΔG가 더 음수인 순서로 정렬한다.
+
+    Note:
+        자기 쌍(fwd↔rev)은 **제외한다** — `validate_primer(check_dimer_with=...)`가
+        이미 전체 프라이머 기준으로 본다. 여기서 또 보면 같은 쌍이 두 번 보고된다.
+    """
+    from params import DEFAULT_PARAMS
+    from itertools import combinations
+    _p = params or DEFAULT_PARAMS
+    hits = []
+    _n_pairs = 0        # 실제로 비교한 쌍 수 — "0건"의 분모가 된다
+    items = [(lab, (seq or "").upper()) for lab, seq in anneals if (seq or "").strip()]
+    for (la, sa), (lb, sb) in combinations(items, 2):
+        # 같은 부품의 fwd↔rev는 이미 검사됐다 — 라벨의 부품 부분이 같으면 건너뛴다.
+        if la.rsplit(" ", 1)[0] == lb.rsplit(" ", 1)[0]:
+            continue
+        _n_pairs += 1
+        r = ValidatePrimer.check_primer_dimer(sa, sb, threshold_dg=_p.qc_dimer_dg)
+        if r.get("has_dimer") and r.get("warning"):
+            _dg = r.get("delta_g")
+            hits.append({"a": la, "b": lb,
+                         "delta_g": _dg,
+                         "blocking": isinstance(_dg, (int, float))
+                                     and _dg <= _p.qc_dg_absolute,
+                         "detail": r["warning"]})
+    hits.sort(key=lambda h: (h["delta_g"] if isinstance(h["delta_g"], (int, float))
+                             else 0.0))
+    scan = _DimerScan(hits)
+    scan.pairs_checked = _n_pairs
+    return scan
+
+
 class PrimerDesign:
     @staticmethod
     def design_basic_primers(
@@ -122,8 +374,16 @@ class PrimerDesign:
             primer_size_range = (prm.primer_len_min, prm.primer_len_max)
 
         # primer3 설정 — 전부 params에서 온다.
-        # ⚠️ SALT/DNA_CONC는 아래 calculate_tm()의 Na/dnac1과 **같은 값이어야** 한다.
-        #    다르면 primer3가 고른 프라이머의 Tm과 우리가 보고하는 Tm이 서로 어긋난다.
+        #
+        # ⚠️ **primer3에는 Tm 창을 걸지 않는다**(2026-11-05). primer3는 자기 열역학
+        #    모델로 Tm을 재는데 우리 축은 NEB 재현(`calculate_tm`)이라 서로 다르다.
+        #    여기서 `PRIMER_MIN_TM/MAX_TM`을 주면 **primer3 축으로 거르고 우리 축으로
+        #    보고하게 되어** 유저가 선언한 창과 실제 선정 기준이 갈린다 — 바로 그 "자가
+        #    두 개" 버그를 오늘 고쳤으므로 되살리지 않는다.
+        #    → primer3는 **후보 생성**만 하고, 창 판정과 선택은 아래에서 우리 축으로 한다.
+        #
+        # 염 농도는 primer3의 내부 랭킹·2차구조 계산에만 쓰이므로 **1가 환산값**을 준다
+        # (Na + K + Tris/2 — Biopython MeltingTemp의 합산 규칙과 같다).
         primer3_settings = {
             'SEQUENCE_ID': 'template',
             'SEQUENCE_TEMPLATE': template,
@@ -131,13 +391,14 @@ class PrimerDesign:
             'PRIMER_OPT_SIZE': prm.primer_len_opt,
             'PRIMER_MIN_SIZE': primer_size_range[0],
             'PRIMER_MAX_SIZE': primer_size_range[1],
-            'PRIMER_OPT_TM': target_tm,
-            'PRIMER_MIN_TM': _tm_lo,
-            'PRIMER_MAX_TM': _tm_hi,
+            'PRIMER_OPT_TM': target_tm,     # 랭킹 힌트로만 남긴다(판정은 우리 축)
+            'PRIMER_MIN_TM': 0.0,           # 창은 열어 둔다 — 아래에서 우리가 고른다
+            'PRIMER_MAX_TM': 100.0,
+            'PRIMER_NUM_RETURN': PRIMER3_NUM_RETURN,
             'PRIMER_MIN_GC': prm.gc_min,
             'PRIMER_MAX_GC': prm.gc_max,
             'PRIMER_MAX_POLY_X': prm.max_poly_x,
-            'PRIMER_SALT_MONOVALENT': prm.na_mM,
+            'PRIMER_SALT_MONOVALENT': prm.na_mM + prm.k_mM + prm.tris_mM / 2.0,
             'PRIMER_DNA_CONC': prm.primer_conc_nM,
             'PRIMER_PRODUCT_SIZE_RANGE': [[50, 1000]],  # Amplicon 크기 범위 확대
             'PRIMER_MAX_SELF_ANY': 12.0,  # Self-complementarity 완화
@@ -166,45 +427,6 @@ class PrimerDesign:
                 {}  # 빈 global args (기본 파라미터 사용)
             )
 
-            # ── 요청 범위로 후보가 안 나오면 기본 범위로 한 번 재시도 (비차단) ──
-            #    연구실이 준 Tm/GC/길이 범위가 이 **서열에서는** 불가능할 수 있다.
-            #    그때 조립 전체를 죽이면, 판정 기준 하나가 파이프라인을 멈추는
-            #    2026-07-13의 실패 모드가 재발한다(과-엄격 → 후보 0 → spacer 선정 무력화).
-            #    → 요청값을 먼저 시도하고, 안 되면 기본값으로 설계한 뒤 **경고로 알린다.**
-            if result.get('PRIMER_PAIR_NUM_RETURNED', 0) == 0 and prm is not DEFAULT_PARAMS:
-                relaxed = dict(primer3_settings)
-                relaxed.update({
-                    'PRIMER_OPT_SIZE': DEFAULT_PARAMS.primer_len_opt,
-                    'PRIMER_MIN_SIZE': DEFAULT_PARAMS.primer_len_min,
-                    'PRIMER_MAX_SIZE': DEFAULT_PARAMS.primer_len_max,
-                    'PRIMER_OPT_TM': DEFAULT_PARAMS.tm_opt,
-                    'PRIMER_MIN_TM': DEFAULT_PARAMS.tm_min,
-                    'PRIMER_MAX_TM': DEFAULT_PARAMS.tm_max,
-                    'PRIMER_MIN_GC': DEFAULT_PARAMS.gc_min,
-                    'PRIMER_MAX_GC': DEFAULT_PARAMS.gc_max,
-                    'PRIMER_MAX_POLY_X': DEFAULT_PARAMS.max_poly_x,
-                })
-                retry = primer3.bindings.design_primers(relaxed, {})
-                if retry.get('PRIMER_PAIR_NUM_RETURNED', 0) > 0:
-                    changed = []
-                    if (prm.gc_min, prm.gc_max) != (DEFAULT_PARAMS.gc_min, DEFAULT_PARAMS.gc_max):
-                        changed.append(f"GC {prm.gc_min:g}~{prm.gc_max:g}% → "
-                                       f"{DEFAULT_PARAMS.gc_min:g}~{DEFAULT_PARAMS.gc_max:g}%")
-                    if (prm.primer_len_min, prm.primer_len_max) != (
-                            DEFAULT_PARAMS.primer_len_min, DEFAULT_PARAMS.primer_len_max):
-                        changed.append(f"길이 {prm.primer_len_min}~{prm.primer_len_max}bp → "
-                                       f"{DEFAULT_PARAMS.primer_len_min}~{DEFAULT_PARAMS.primer_len_max}bp")
-                    if (prm.tm_min, prm.tm_max) != (DEFAULT_PARAMS.tm_min, DEFAULT_PARAMS.tm_max):
-                        changed.append(f"Tm {prm.tm_min:g}~{prm.tm_max:g}℃ → "
-                                       f"{DEFAULT_PARAMS.tm_min:g}~{DEFAULT_PARAMS.tm_max:g}℃")
-                    warnings.append(
-                        "요청하신 설계 범위로는 이 서열에서 프라이머를 찾지 못해 기본 범위로 설계했습니다 "
-                        f"({'; '.join(changed) if changed else '기본 범위'}). "
-                        "조립은 진행되며, 필요하면 범위를 넓혀 다시 실행하세요."
-                    )
-                    print(f"     ⚠️ 요청 범위로 프라이머 없음 → 기본 범위로 설계 ({'; '.join(changed)})")
-                    result = retry
-
             # 결과 확인
             if result['PRIMER_PAIR_NUM_RETURNED'] == 0:
                 error_msg = "⚠️  적절한 프라이머를 찾을 수 없습니다."
@@ -221,17 +443,62 @@ class PrimerDesign:
                     'warnings': warnings
                 }
 
-            # 첫 번째 프라이머 쌍 선택
-            fwd_seq = result['PRIMER_LEFT_0_SEQUENCE']
-            rev_seq = result['PRIMER_RIGHT_0_SEQUENCE']
-            fwd_start = result['PRIMER_LEFT_0'][0]
-            rev_start = result['PRIMER_RIGHT_0'][0]
+            # ── 프라이머 쌍 선택 — **우리 축(NEB 재현)으로 고른다** ──────────────
+            # primer3는 후보만 만들었다(위에서 Tm 창을 열어 뒀다). 유저가 선언한 창
+            # [tm_min, tm_max]은 여기서 적용한다. 그래야 "선언한 창 = 선정 기준 = 시트
+            # 숫자"가 한 축으로 유지된다.
+            _n = result['PRIMER_PAIR_NUM_RETURNED']
+            _cands = []
+            for _i in range(_n):
+                _f = result[f'PRIMER_LEFT_{_i}_SEQUENCE']
+                _r = result[f'PRIMER_RIGHT_{_i}_SEQUENCE']
+                _tf = calculate_tm(_f, **prm.tm_kwargs())
+                _tr = calculate_tm(_r, **prm.tm_kwargs())
+                # 창 밖으로 벗어난 거리(양쪽 프라이머 합). 창 안이면 0.
+                _dist = (max(0.0, _tm_lo - min(_tf, _tr))
+                         + max(0.0, max(_tf, _tr) - _tm_hi))
+                _cands.append((_i, _f, _r, _tf, _tr, _dist))
+
+            _in_win = [c for c in _cands if c[5] <= 0.0]
+            if _in_win:
+                # 창 안에서는 **두 프라이머 Tm이 가장 비슷한 쌍**을 고른다. 한쪽만 뜨거우면
+                # 낮은 쪽이 안 붙거나 높은 쪽이 비특이 결합한다(Ta는 낮은 쪽이 정한다).
+                _pick = min(_in_win, key=lambda c: (abs(c[3] - c[4]), len(c[1]) + len(c[2])))
+            else:
+                # 창 안에 하나도 없으면 **가장 가까운 쌍**을 쓰고 알린다(조립은 진행).
+                # 기본값으로 갈아타지 않는다 — 그러면 무엇을 요청하든 같은 프라이머가
+                # 나와서 "값을 바꿔도 결과가 안 변한다"가 된다(2026-11-05 Y9).
+                _pick = min(_cands, key=lambda c: (c[5], abs(c[3] - c[4])))
+                _msg = (f"요청하신 Tm {_tm_lo:g}~{_tm_hi:g}℃ 안에서 프라이머 **쌍**을 "
+                        f"만들지 못해 가장 가까운 쌍으로 설계했습니다 "
+                        f"(fwd {_pick[3]:.1f}℃/{len(_pick[1])}nt · "
+                        f"rev {_pick[4]:.1f}℃/{len(_pick[2])}nt).")
+                _why = _explain_shortfall_axis(_pick[3], _pick[4], _tm_lo, _tm_hi)
+                if _why:
+                    _msg += f" {_why}"
+                _hint = _length_hint(primer3_settings, prm, _tm_lo, _tm_hi)
+                if _hint:
+                    _msg += f" {_hint}"
+                warnings.append(_msg)
+                print(f"     ⚠️ {_msg}")
+
+            _k = _pick[0]
+            fwd_seq = result[f'PRIMER_LEFT_{_k}_SEQUENCE']
+            rev_seq = result[f'PRIMER_RIGHT_{_k}_SEQUENCE']
+            fwd_start = result[f'PRIMER_LEFT_{_k}'][0]
+            rev_start = result[f'PRIMER_RIGHT_{_k}'][0]
 
             # 프라이머 특성 계산
-            fwd_tm = calculate_tm(fwd_seq, Na=prm.na_mM, dnac1=prm.primer_conc_nM)
-            rev_tm = calculate_tm(rev_seq, Na=prm.na_mM, dnac1=prm.primer_conc_nM)
+            fwd_tm = calculate_tm(fwd_seq, **prm.tm_kwargs())
+            rev_tm = calculate_tm(rev_seq, **prm.tm_kwargs())
             fwd_gc = calculate_gc_content(fwd_seq)
             rev_gc = calculate_gc_content(rev_seq)
+
+            # 쌍 ΔTm 판정 — Ta는 낮은 쪽 Tm 기준이라 차이가 벌어지면 뜨거운 쪽이
+            # 자기 Tm보다 낮은 온도에서 돈다(§check_pair_tm_diff).
+            _pair_w = check_pair_tm_diff(fwd_tm, rev_tm, prm)
+            if _pair_w:
+                warnings.append(_pair_w)
 
             # Amplicon 크기 계산
             amplicon_size = rev_start - fwd_start + len(fwd_seq)
@@ -389,7 +656,7 @@ class PrimerDesign:
 
         def _tm(seq: str) -> float:
             """이 설계 한 벌에 일관된 조건으로 Tm 계산(연구실 염/농도)."""
-            return calculate_tm(seq, Na=prm.na_mM, dnac1=prm.primer_conc_nM)
+            return calculate_tm(seq, **prm.tm_kwargs())
 
         def _fit_amplicon(pool: str, tail: str, from_end: bool) -> dict:
             in_window = []   # 선언 범위 안에 든 후보들 (tail 있는 경우)
@@ -516,6 +783,11 @@ class PrimerDesign:
         all_warnings.extend([f"Fwd: {w}" for w in fwd_val.get('warnings', [])])
         all_warnings.extend([f"Rev: {w}" for w in rev_val.get('warnings', [])])
         all_warnings.extend(tm_warnings)   # C-3 Tm 미수렴(60bp 내 최적 근사) 경고 합류
+        # 쌍 ΔTm — GG는 길이가 overhang·spacer에 묶여 Tm을 맞출 자유도가 적어
+        # 실측 최악 케이스(11.68℃)가 이 경로에 몰렸다(§check_pair_tm_diff).
+        _pair_w = check_pair_tm_diff(fwd_val['tm'], rev_val['tm'], prm)
+        if _pair_w:
+            all_warnings.append(_pair_w)
 
         # 구조 수치(dimer/hairpin ΔG) — tier에 영향 없이 리포트로만 나간다.
         all_structural = []
@@ -555,6 +827,13 @@ class PrimerDesign:
             'rev_tm_diff': rev_fit['diff'],
             'amplicon_fwd_len': fwd_fit['len'],
             'amplicon_rev_len': rev_fit['len'],
+            # 2026-11-05(Y12) — **주형 결합부의 프라이머 서열**. 교차 dimer 검사가 쓴다.
+            #   fwd_primer = prefix + amplicon_fwd      → 결합부 = amplicon_fwd
+            #   rev_primer = RC(amplicon_end + suffix)  → 결합부 = RC(amplicon_end)
+            #   ⚠️ 호출자가 프라이머를 슬라이스해 되찾게 두지 않는다 — Y10-b에서 같은
+            #      실수를 했다(`_validate_primer_length`가 길이를 바꿔 슬라이스가 어긋났다).
+            'fwd_anneal': amplicon_fwd,
+            'rev_anneal': str(Seq(amplicon_end).reverse_complement()),
             'fwd_accessibility': fwd_access,
             'rev_accessibility': rev_access,
             'fwd_passed': fwd_val['passed'],   # fwd(=L 발판) 단독 통과 — spacer 선정 L 후보 판정용
@@ -855,22 +1134,22 @@ class ValidatePrimer:
         프라이머의 품질을 종합적으로 검증합니다.
 
         검증 항목:
-        - Tm 범위 (`qc_tm_min`~`qc_tm_max`, 기본 50~80℃)
-        - GC% 범위 — 차단창(`qc_gc_min`~`qc_gc_max`, 기본 20~80%)과
-          경고창(`qc_gc_ideal_min`~`qc_gc_ideal_max`, 기본 40~60%) 2층
+        - Tm 범위 (`tm_min`~`tm_max` — **유저 선언창**, 기본 55~65℃)
+        - GC% 범위 (`gc_min`~`gc_max` — 유저 선언창, 기본 20~80%)
+        - 결합부 길이 (`primer_len_min`~`primer_len_max` — 유저 선언창)
         - Self-dimer
         - Hairpin (2차 구조)
         - GC clamp
 
         Args:
             primer: 프라이머 서열
-            min_tm: 최소 Tm (°C). None이면 `params.qc_tm_min`(**판정창** — 설계창
-                `tm_min`과 다른 축이다. 판정창은 설계창을 포함한다)
-            max_tm: 최대 Tm (°C). None이면 `params.qc_tm_max`(판정창 상한)
-            min_gc: GC **차단** 하한 **분수**(0~1). None이면 `params.qc_gc_min`(%)을
+            min_tm: 최소 Tm (°C). None이면 `params.tm_min`(**유저 선언창** — 2026-11-05
+                Y11에서 판정창을 없애고 선언창 하나로 합쳤다)
+            max_tm: 최대 Tm (°C). None이면 `params.tm_max`
+            min_gc: GC 하한 **분수**(0~1). None이면 `params.gc_min`(%)을
                 100으로 나눠 쓴다. 차단창은 설계창(`gc_min`/`gc_max`)을 포함한다 —
                 그 안쪽의 이상 구간 이탈은 차단이 아니라 경고로 나간다(아래)
-            max_gc: GC 차단 상한 **분수**(0~1). None이면 `params.qc_gc_max`(%)/100
+            max_gc: GC 상한 **분수**(0~1). None이면 `params.gc_max`(%)/100
             check_dimer_with: 다른 프라이머 (dimer 체크용)
             tail_len: 5' 비-anneal tail 길이 (기본값: 0 = 일반 PCR).
                 Gibson(vector homology)/GG(site+spacer+overhang)처럼 5'에 tail이 붙어
@@ -931,62 +1210,86 @@ class ValidatePrimer:
         anneal_gate = warnings if tail_len else violations
         _t = " (tail — 경고)" if tail_len else ""
 
-        # 1. 길이 체크 (15-30 bp 권장) — anneal 부분 기준 (tail은 2차 cycle 이후라 제외)
-        length = len(anneal)
-        if length < 15:
-            anneal_gate.append(f"프라이머(anneal)가 너무 짧습니다 ({length} bp < 15 bp){_t}")
-        elif length > 30:
-            anneal_gate.append(f"프라이머(anneal)가 너무 깁니다 ({length} bp > 30 bp){_t}")
-
-        # 2. Tm 체크 — anneal 부분 기준 (1차 cycle 결합부)
-        # ⚠️ **판정은 `qc_tm_*`(판정창), 설계는 `tm_*`(설계창)** — 2026-11-04 재분리.
-        #    2026-09-23에 둘을 합친 이유(설계창과 판정창이 어긋나 '전부 red')는 유효하지만,
-        #    합치면 설계창이 판정까지 겸해서 ① 판정을 느슨하게 하려고 창을 넓히면 선정
-        #    규칙("창 안에서 가장 짧은 것")이 더 나쁜 프라이머를 집고 ② tail 없는 끝단
-        #    프라이머만 같은 Tm 미달로 red가 됐다. 판정창이 설계창을 **포함**하면 어긋남은
-        #    구조적으로 불가능하므로, 포함 관계를 지키는 조건으로 다시 나눴다
-        #    (`DesignParams.validate()`가 포함 관계를 검사해 경고한다).
-        #    GC도 같은 구조다(`qc_gc_*` vs 설계용 `gc_*`).
-        #    호출자가 값을 직접 주면 그것이 우선한다(None일 때만 params에서 가져온다).
+        # ── 판정 기준은 **유저가 선언한 값** 하나다 (2026-11-05 Y11) ─────────────
+        # 예전에는 세 축 모두 선언창 바깥에 판정창을 하나 더 뒀다(`qc_tm_*` 45~85℃,
+        # `qc_gc_*` 20~80% + `qc_gc_ideal_*` 40~60%). 길이 축은 더 나빴다 — 판정값이
+        # `15`/`30` **리터럴**이라 유저가 Q5(상한 26nt)를 골라도 경고는 30 기준으로
+        # 떴다. 유저 설정과 경고가 따로 노는 상태였고, 그 결과 78행에 경고 154건
+        # (행당 2.0건) 중 **대부분이 유저가 설정한 적 없는 기준** 위반이었다.
+        #
+        # → 판정도 선언창으로 한다. "내가 설정한 범위를 벗어나면 알려준다"가 되고,
+        #   창이 하나뿐이라 어긋남이 구조적으로 불가능하다(§params.TM_INPUT_MIN).
+        #   물리 경계는 입력 제한이 막으므로 여기서 또 막을 필요가 없다.
+        #   호출자가 값을 직접 주면 그것이 우선한다(None일 때만 params에서 가져온다).
         from params import DEFAULT_PARAMS
         _p = params or DEFAULT_PARAMS
-        min_tm = _p.qc_tm_min if min_tm is None else min_tm
-        max_tm = _p.qc_tm_max if max_tm is None else max_tm
-        # qc_gc_*는 **%**, 이 함수 내부 비교는 **분수**라 여기서 한 번만 환산한다.
-        min_gc = (_p.qc_gc_min / 100.0) if min_gc is None else min_gc
-        max_gc = (_p.qc_gc_max / 100.0) if max_gc is None else max_gc
-        # 경고창(이상 구간)은 **차단창 안쪽**으로 클램프한다 — 호출자가 min_gc/max_gc를
-        # 직접 줘서 차단창이 좁아졌을 때 "경고도 안 뜨는데 차단되는" 구간이 생기지 않게.
-        ideal_lo = max(min_gc, _p.qc_gc_ideal_min / 100.0)
-        ideal_hi = min(max_gc, _p.qc_gc_ideal_max / 100.0)
-        tm = calculate_tm(anneal, Na=_p.na_mM, dnac1=_p.primer_conc_nM)
-        if tm < min_tm:
-            anneal_gate.append(f"Tm이 너무 낮습니다 ({tm:.1f}°C < {min_tm}°C){_t}")
-        elif tm > max_tm:
-            anneal_gate.append(f"Tm이 너무 높습니다 ({tm:.1f}°C > {max_tm}°C){_t}")
+        min_tm = _p.tm_min if min_tm is None else min_tm
+        max_tm = _p.tm_max if max_tm is None else max_tm
+        # 선언창 gc_*는 **%**, 이 함수 내부 비교는 **분수**라 여기서 한 번만 환산한다.
+        min_gc = (_p.gc_min / 100.0) if min_gc is None else min_gc
+        max_gc = (_p.gc_max / 100.0) if max_gc is None else max_gc
 
-        # 3. GC% 체크 — anneal 부분 기준, **2층**(2026-11-05)
-        #    차단창(qc_gc_min/max)은 설계창을 포함하므로 여기 걸리는 건 primer3가 설계
-        #    목표 밖에서 집어온 경우뿐이다. 그 안쪽에서 이상 구간(qc_gc_ideal_*)을 벗어나면
-        #    **경고만** 한다 — GC는 길이를 늘려도 안 바뀌는 템플릿의 성질이라 차단해도
-        #    실험자가 할 수 있는 일이 없다. 다만 초록으로 숨기지도 않는다.
-        #    경고는 tail 여부와 무관하게 warnings로 보낸다(운반자에 따라 적/황이 갈리던
-        #    비대칭 제거 — anneal_gate를 쓰지 않는 이유다).
+        # ── 1. 길이 체크 — **tail 유무로 자가 갈린다** (2026-11-05 Y11) ───────────
+        # 이 분기는 새 규칙이 아니다. 바로 아래 `anneal_gate`가 이미 같은 `tail_len`으로
+        # 적/황을 가르고 있었고, 길이 축만 그 규칙을 안 따르고 있었다.
+        #
+        #   · tail_len == 0 (일반 PCR·끝단 프라이머)
+        #       결합부 길이 = 프라이머 전체 길이이고, primer3가 Tm 창 안에서 길이를
+        #       **자유롭게** 고를 수 있다. 그러니 유저 선언창(`primer_len_min/max`,
+        #       GUI의 "Annealing length")을 지킬 수 있고, 못 지켰으면 알릴 값이 있다.
+        #
+        #   · tail_len > 0 (GG / Gibson 삽입 프라이머)
+        #       tail이 길이·서열 **둘 다 고정**이다(GG는 [패딩][인식서열][spacer][overhang],
+        #       Gibson은 벡터 homology 30bp). 그래서 결합부 길이는 유저가 고르는 값이
+        #       아니라 `tm_diff_max` 수렴의 **종속 변수**다 — 실측하면 같은 설정에서도
+        #       부품·프리셋에 따라 13~43nt로 흩어진다. 이 길이를 선언창으로 재면
+        #       **유저가 숫자를 어떻게 바꿔도 못 없애는 경고**가 된다(실측 36건).
+        #       → 여기서는 **실제로 막히는 제약**만 본다: 합성 주문 상한
+        #         (`PRIMER_ORDER_MAX_NT`)과 결합부 특이성 바닥(`amp_min`).
+        from params import PRIMER_ORDER_MAX_NT
+        length = len(anneal)
+        if tail_len:
+            # 주문 단위는 **전체 프라이머**다(tail 포함). 결합부만 재면 못 잡는다.
+            if len(primer) > PRIMER_ORDER_MAX_NT:
+                anneal_gate.append(
+                    f"주문할 프라이머가 합성 상한보다 깁니다 "
+                    f"({len(primer)} nt > {PRIMER_ORDER_MAX_NT} nt){_t}")
+            if length < _p.amp_min:
+                anneal_gate.append(
+                    f"주형 결합부가 특이성 하한보다 짧습니다 "
+                    f"({length} bp < {_p.amp_min} bp — 짧은 부품이라 결합부가 tail에 "
+                    f"흡수된 경우입니다){_t}")
+        else:
+            if length < _p.primer_len_min:
+                anneal_gate.append(
+                    f"프라이머가 설정한 길이 하한보다 짧습니다 "
+                    f"({length} bp < {_p.primer_len_min} bp){_t}")
+            elif length > _p.primer_len_max:
+                anneal_gate.append(
+                    f"프라이머가 설정한 길이 상한보다 깁니다 "
+                    f"({length} bp > {_p.primer_len_max} bp){_t}")
+
+        # 2. Tm 체크 — anneal 부분 기준 (1차 cycle 결합부)
+        tm = calculate_tm(anneal, **_p.tm_kwargs())
+        if tm < min_tm:
+            anneal_gate.append(
+                f"Tm이 설정한 하한보다 낮습니다 ({tm:.1f}°C < {min_tm:g}°C){_t}")
+        elif tm > max_tm:
+            anneal_gate.append(
+                f"Tm이 설정한 상한보다 높습니다 ({tm:.1f}°C > {max_tm:g}°C){_t}")
+
+        # 3. GC% 체크 — anneal 부분 기준, **선언창 1층**(2026-11-05 Y11)
+        #    Y7에서 둔 경고층(`qc_gc_ideal_*` 40~60%)을 제거했다. 그 층은 유저가
+        #    설정한 값이 아니면서 78행 중 39행(50%)에 경고를 달았고 — GC는 길이를
+        #    늘려도 안 바뀌는 **템플릿의 성질**이라 경고를 봐도 실험자가 할 수 있는
+        #    일이 없었다. 판정은 선언창(`gc_min/gc_max`) 하나로 한다.
         gc_content = calculate_gc_content(anneal)
         if gc_content < min_gc:
-            anneal_gate.append(f"GC%가 너무 낮습니다 ({gc_content:.1%} < {min_gc:.1%}){_t}")
+            anneal_gate.append(
+                f"GC%가 설정한 하한보다 낮습니다 ({gc_content:.1%} < {min_gc:.1%}){_t}")
         elif gc_content > max_gc:
-            anneal_gate.append(f"GC%가 너무 높습니다 ({gc_content:.1%} > {max_gc:.1%}){_t}")
-        elif gc_content < ideal_lo:
-            warnings.append(
-                f"GC%가 이상 구간보다 낮습니다 ({gc_content:.1%} < {ideal_lo:.1%}) — "
-                f"AT-rich 템플릿이면 정상일 수 있습니다(Tm은 별도 판정)"
-            )
-        elif gc_content > ideal_hi:
-            warnings.append(
-                f"GC%가 이상 구간보다 높습니다 ({gc_content:.1%} > {ideal_hi:.1%}) — "
-                f"GC-rich 템플릿이면 정상일 수 있습니다(Tm은 별도 판정)"
-            )
+            anneal_gate.append(
+                f"GC%가 설정한 상한보다 높습니다 ({gc_content:.1%} > {max_gc:.1%}){_t}")
 
         # 4. GC clamp 체크 (경고만, violations에 추가 안 함)
         gc_clamp_result = ValidatePrimer.check_gc_clamp(primer)

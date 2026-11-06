@@ -162,6 +162,19 @@ if rows:
     check(len(fwd) <= 80 and len(rev) <= 80,
           "둘 다 주문 상한 80nt 이내", f"fwd {len(fwd)}nt / rev {len(rev)}nt")
 
+# ── fragment 1개 경로도 **후처리를 타야 한다** (2026-11-05 회귀) ──────────────
+# 단축 경로를 `return target[0]`으로 끊었더니 그 아래 P6 feature 기입까지 건너뛰어
+# module/construct에 파츠 feature가 **0개**로 나왔다(부품 4개 경로는 8개였다).
+# 벡터맵이 그 feature로 파츠 자리를 잡으므로, 파츠를 눌러도
+# "not in the case you are viewing"만 떴다 — **맞는 파츠를 눌러도** 실패했다.
+print("\n[4-1] fragment 1개여도 파츠 feature가 기입된다 (단축 경로 회귀)")
+labels = {(f.qualifiers.get("label") or ["-"])[0] for f in con.features} if con is not None else set()
+check("BBa_C0020" in labels, "construct에 부품 feature가 있다", str(sorted(labels)))
+check(any(f.type == "CDS" for f in con.features),
+      "부품 타입이 feature type으로 반영됨(cds → CDS)",
+      str([f.type for f in con.features]))
+check(len(con.features) > 1, "source 말고도 feature가 있다", f"{len(con.features)}개")
+
 print("\n[5] 멀티모듈 vector_homology — 양 끝은 벡터, 연결은 라이브러리")
 gA = [db.get_part_by_id("Bioparts", t, i) for t, i in
       [("promoter", "BBa_J23100"), ("cds", "BBa_C0012")]]
@@ -199,27 +212,34 @@ check(all(not x.startswith(fin.name[:11]) for x in b3),
       "경계 전부가 라이브러리 spacer", str(b3))
 check(len(set(b3)) == len(b3), "경계끼리 중복 없음", str(b3))
 
-print("\n[7] Tm 판정은 qc_tm_* 를 쓴다 (설계창 tm_* 가 아니다)")
-# 설계창을 [70,75]로 좁혀도, 판정창 [50,80] 안에 드는 프라이머는 Tm으로 떨어지지 않아야 한다.
+# ⚠️ 2026-11-05(Y11) — Y6이 만든 `qc_tm_*` 판정창은 **제거**됐다. Y6의 진단
+#   ("설계창이 판정까지 겸하면 창을 넓혀 판정을 느슨하게 하는 부작용이 생긴다")은
+#   맞았지만, 처방인 "창을 둘로 나눈다"가 같은 버그를 두 번 더 냈다(Y7 GC · Y11 길이).
+#   Y11의 처방은 반대 방향이다 — **창은 하나로 두고, 물리 경계는 입력 단계가 막는다.**
+#   그러면 "겨냥한 곳에 만들어 놓고 내가 떨어뜨리는" 모순도, 두 창이 어긋날 여지도 없다.
+#   아래 두 절은 그 뒤집힘을 고정한다.
+print("\n[7] Tm 판정은 **선언창**을 쓴다 (유저가 설정한 값이 곧 기준이다)")
 pr = "ATGGCGGATAAAGAACTTAAATT"
-narrow = DesignParams(tm_min=70.0, tm_max=75.0, qc_tm_min=50.0, qc_tm_max=80.0)
-v = ValidatePrimer().validate_primer(pr, params=narrow)
+_tm = ValidatePrimer().validate_primer(pr, params=DesignParams())["tm"]
+# 이 프라이머의 Tm을 품는 창 / 품지 못하는 창을 각각 만든다(입력 제한 35~80 안에서).
+wide = DesignParams(tm_min=max(35.0, _tm - 5), tm_max=min(80.0, _tm + 5))
+tight = DesignParams(tm_min=min(80.0, _tm + 4), tm_max=min(80.0, _tm + 9))
 # 필터는 **"Tm" 부분문자열이 아니라 실제 지적 문구**로 잡는다 — 다른 축의 메시지가
 # 설명으로 "Tm"을 언급할 수 있다(GC 경고문의 "(Tm은 별도 판정)"에 2026-11-05 실제로 걸렸다).
-tm_msgs = [m for m in v["violations"] + v["warnings"] if "Tm이" in m]
-check(not tm_msgs, "설계창 밖이어도 판정창 안이면 Tm 지적 없음",
-      f"Tm {v['tm']:.1f}℃ / 설계창 70~75 / 판정창 50~80" + (f" → {tm_msgs}" if tm_msgs else ""))
-tight = DesignParams(tm_min=55.0, tm_max=65.0, qc_tm_min=60.0, qc_tm_max=80.0)
-v2 = ValidatePrimer().validate_primer(pr, params=tight)
-check(any("Tm이" in m for m in v2["violations"] + v2["warnings"]),
-      "판정창을 올리면 같은 프라이머가 Tm으로 지적된다", f"Tm {v2['tm']:.1f}℃ / 판정창 60~80")
+def tm_msgs(p):
+    v = ValidatePrimer().validate_primer(pr, params=p)
+    return [m for m in v["violations"] + v["warnings"] if "Tm이" in m]
+check(not tm_msgs(wide), "선언창 안이면 지적 없음",
+      f"Tm {_tm:.1f}℃ / 창 {wide.tm_min:g}~{wide.tm_max:g}")
+check(bool(tm_msgs(tight)), "창을 올리면 같은 프라이머가 지적된다",
+      f"Tm {_tm:.1f}℃ / 창 {tight.tm_min:g}~{tight.tm_max:g}")
+check("설정한" in (tm_msgs(tight) or [""])[0],
+      "메시지가 '설정한 기준'임을 밝힌다", (tm_msgs(tight) or [""])[0][:58])
 
-print("\n[8] 판정창이 설계창을 못 덮으면 경고")
-warns = DesignParams(tm_min=55.0, tm_max=65.0, qc_tm_min=60.0, qc_tm_max=80.0).validate()
-check(any("판정창" in w for w in warns), "포함 관계 위반을 경고한다",
-      next((w for w in warns if "판정창" in w), "(경고 없음)"))
-clean = DesignParams().validate()
-check(not any("판정창" in w for w in clean), "기본값(50~80 ⊃ 55~65)은 경고 없음")
+print("\n[8] 두 번째 창이 아예 없다 (어긋남이 구조적으로 불가능)")
+check(not hasattr(DesignParams(), "qc_tm_min"), "qc_tm_min 제거됨")
+check(not any("판정창" in w for w in DesignParams().validate()),
+      "포함 관계 경고도 함께 사라졌다 (검사할 상태 자체가 없다)")
 
 print("=" * 72)
 print(f"Y6 {'통과' if not FAIL else f'실패 {len(FAIL)}건'}")

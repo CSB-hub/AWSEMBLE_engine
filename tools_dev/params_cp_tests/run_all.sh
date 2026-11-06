@@ -16,7 +16,21 @@ fail=0
 #   (2026-11-04 추가 — develop_log/nyb/20261104_양끝_spacer_주문시트_수정.md)
 #   y7: GC 판정창 분리(차단창 ⊇ 설계창) + 이상 구간 경고층 + 적/황 비대칭 제거 회귀.
 #   (2026-11-05 추가 — develop_log/nyb/20261105_GC_판정창_분리.md)
-for t in cp0 cp1 cp2 cp3 cp5 cp6 pad cp7 cp7_excise cp7_e2e vec_verify real_vector one_vector mm_linear mm_circular vector_homology g1 g3 h1 y1 y2 y3 y4 y5 y6 y7; do
+#   y8: Tm 자를 primer3로 통일(GG는 Biopython, gibson은 primer3로 갈려 있었다) 회귀.
+#   (2026-11-05 추가 — develop_log/nyb/20261105_Tm축_primer3_통일.md)
+#   y9: 설계 범위를 못 맞추면 기본값이 아니라 **근접값** + 이유·길이 제안 회귀.
+#   (2026-11-05 추가 — develop_log/nyb/20261105_설계범위_근접값_제안.md)
+#   y10: Tm 축을 NEB Tm Calculator 재현으로 통일 — polymerase 특성이 설계에 실제로
+#        반영되는가 + NEB 공개값 오프라인 재현 회귀.
+#   (2026-11-05 추가 — develop_log/nyb/20261105_Tm축_NEB재현.md)
+#   y11: 판정 기준을 **유저 선언창 하나**로 합침(판정창 qc_tm_*/qc_gc_* 제거, 물리 경계는
+#        입력 제한 TM_INPUT_MIN/MAX로) + 길이 판정을 tail_len으로 분기 + ΔTm(fwd−rev) 신설.
+#   (2026-11-05 추가 — develop_log/nyb/20261105_판정창_선언창_통합.md)
+#   y12: 쌍 단위 교차 검사 — 접합부 교차에 **역상보 방향** 추가(정방향만 봐서 절반을
+#        놓치고 있었다) + one-pot 프라이머 **결합부끼리** 교차 dimer 신설(차단은
+#        qc_dg_absolute, 기록은 qc_dimer_dg 2등급) + reports/cross_checks.csv.
+#   (2026-11-05 추가 — develop_log/nyb/20261105_쌍단위_교차검사.md)
+for t in cp0 cp1 cp2 cp3 cp5 cp6 pad cp7 cp7_excise cp7_e2e vec_verify real_vector one_vector mm_linear mm_circular vector_homology g1 g3 h1 y1 y2 y3 y4 y5 y6 y7 y8 y9 y10 y11 y12; do
   printf "%-6s " "$t"
   if timeout 1800 "$PY" "$HERE/${t}_test.py" >/tmp/${t}_out.txt 2>&1; then echo "통과"
   else echo "실패 (로그: /tmp/${t}_out.txt)"; fail=1; fi

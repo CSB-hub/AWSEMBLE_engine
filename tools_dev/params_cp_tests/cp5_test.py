@@ -38,7 +38,7 @@ def run(tag, prm, parts_override=None):
         "enzyme": sorted({r["restriction_enzyme"] for r in rows}),
         "sha": hashlib.sha256(str(con.seq).upper().encode()).hexdigest()[:16],
         "cond": (d/"proj"/"reports"/"design_conditions.md").exists(),
-        "vp": int(list(csv.DictReader(open(d/"proj"/"reports"/"vector_primers.csv", encoding="utf-8")))[0]["fwd_len"]),
+        "vp": int(list(csv.DictReader(open(d/"proj"/"reports"/"vector_primers.csv", encoding="utf-8")))[0]["fwd_mer"]),
         "na": rows[0].get("fwd_tm"),
         "tmfull_ok": all(r.get("fwd_tm_full") for r in rows),
     }

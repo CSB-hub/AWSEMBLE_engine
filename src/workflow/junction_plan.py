@@ -58,7 +58,7 @@ lp1 | sp | lp2   (arm 45)
 ## 품질 기준 — 프라이머 축을 빌려 쓰지 않는다
 
 접합부 구간은 프라이머가 아니다. 상보 가닥과 **전체 길이로** 어닐링하므로 40~60bp면
-GC와 무관하게 Tm이 충분하다. 그런데 예전 구현은 프라이머 anneal 기준(`qc_gc_min/max`
+GC와 무관하게 Tm이 충분하다. 그런데 예전 구현은 프라이머 anneal 기준(GC 판정창
 35~60%, hairpin ΔG > −3.0)을 그대로 적용했고, 그 컷오프들은 ~20nt 기준이라 **길다는
 이유만으로** 탈락시켰다.
 
@@ -74,10 +74,11 @@ hairpin ΔG ≤ −3 비율도 창 길이에 끌려간다 — 20bp에서 1%, 60b
 2차구조는 경고로만 남긴다. 진짜 차단 기준은 **접합부 유일성**이다.
 
 > 2026-11-05: **프라이머 판정축도 같은 결론으로 따라왔다.** 여기서 위 실측으로
-> 35~60%를 버린 뒤에도 `ValidatePrimer.validate_primer`의 `qc_gc_min/max`는
+> 35~60%를 버린 뒤에도 `ValidatePrimer.validate_primer`의 GC 판정창은
 > 35~60%로 남아 있어서, 효모 AT-rich 끝단 프라이머(GC 28%)가 red로 떨어졌다.
 > 지금은 차단창이 설계창을 포함(20~80%)하고, 관례적 이상 구간(40~60%,
-> `qc_gc_ideal_*`)은 **경고 전용**이다 — 위 표의 "GC 20~80만" 행과 같은 기준이다.
+> 2026-11-05(Y11)에는 그 2층마저 없애고 **유저 선언창 `gc_min/gc_max`** 하나로
+> 합쳤다 — 기본값이 20~80%라 위 표의 "GC 20~80만" 행과 같은 기준이다.
 """
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -229,7 +230,9 @@ class JunctionPlan:
         arm_min / arm_max: 사용한 접합부 길이 범위
         warnings: 차단은 아니지만 알려야 하는 사항
         max_crosstalk: 비인접 fragment 쌍의 최대 공통서열 길이(bp)
-        crosstalk_pairs: 임계를 넘은 (왼쪽 이름, 오른쪽 이름, 길이) 목록
+        crosstalk_checked: 교차를 비교한 비인접 쌍의 수 — 0건의 분모다
+        crosstalk_pairs: 임계를 넘은 (왼쪽 이름, 오른쪽 이름, 길이, 방향) 목록.
+            방향은 `"정방향"` 또는 `"역상보"` — 어느 쪽에서 걸렸는지 알려준다.
     """
 
     fragments: List[FragmentSpec]
@@ -239,7 +242,8 @@ class JunctionPlan:
     arm_max: int
     warnings: List[str] = field(default_factory=list)
     max_crosstalk: int = 0
-    crosstalk_pairs: List[Tuple[str, str, int]] = field(default_factory=list)
+    crosstalk_checked: int = 0
+    crosstalk_pairs: List[Tuple[str, str, int, str]] = field(default_factory=list)
 
     @property
     def arm(self) -> int:
@@ -685,23 +689,43 @@ class JunctionPlanner:
 
         Gibson 트랙은 경고까지만 한다 — 시험관 반응이라 조립 산물을 확인할 수 있다.
         yeast 트랙은 `YeastHRCloning._check_plan`이 이걸 하드 차단으로 올린다.
+
+        ⚠️ **정방향과 역상보를 둘 다 본다** (2026-11-05 Y12). 2026-11-05까지는 정방향만
+        봐서 교차의 **절반을 놓쳤다** — `longest_common_substring_len`이 독스트링에
+        "역상보는 보지 않는다 — 역상보 교차까지 봐야 하면 호출자가 한쪽을
+        `reverse_complement()`해서 한 번 더 부른다"고 적어뒀는데 그 두 번째 호출이
+        없었다. homology 조립은 **이중가닥끼리 상동성을 찾는** 반응이라 한쪽 fragment가
+        뒤집혀 들어가도 재조합이 성립한다(그래서 pydna도 원형 산물을 역상보 회전으로
+        2개 돌려준다 — `YeastHRCloning.assemble` 참고). 방향을 하나만 보는 건
+        **반쪽 검사**였다.
         """
         from basic.sequence_analysis import longest_common_substring_len
+        from Bio.Seq import Seq as _Seq
 
         frags = plan.fragments
         worst = 0
+        checked = 0
         for i in range(len(frags)):
             for j in range(i + 2, len(frags)):
-                shared = longest_common_substring_len(frags[i].seq, frags[j].seq)
+                checked += 1
+                a, b = str(frags[i].seq), str(frags[j].seq)
+                fwd = longest_common_substring_len(a, b)
+                # 한쪽만 뒤집어 한 번 더 — 둘 다 뒤집으면 정방향 비교와 같아진다.
+                rev = longest_common_substring_len(
+                    a, str(_Seq(b).reverse_complement()))
+                shared = max(fwd, rev)
                 worst = max(worst, shared)
                 if shared >= JUNCTION_UNIQUE_MAX_BP:
-                    plan.crosstalk_pairs.append((frags[i].name, frags[j].name, shared))
+                    plan.crosstalk_pairs.append(
+                        (frags[i].name, frags[j].name, shared,
+                         "역상보" if rev > fwd else "정방향"))
         plan.max_crosstalk = worst
-        for a, b, n in plan.crosstalk_pairs:
+        plan.crosstalk_checked = checked
+        for a, b, n, orient in plan.crosstalk_pairs:
             plan.warnings.append(
                 f"⚠️ 비인접 fragment {a} ↔ {b}가 {n}bp를 공유합니다 "
-                f"(임계 {JUNCTION_UNIQUE_MAX_BP}bp) — 의도하지 않은 자리끼리 재조합할 수 "
-                f"있습니다. 같은 부품을 두 자리에 쓰고 있는지 확인하세요."
+                f"({orient}, 임계 {JUNCTION_UNIQUE_MAX_BP}bp) — 의도하지 않은 자리끼리 "
+                f"재조합할 수 있습니다. 같은 부품을 두 자리에 쓰고 있는지 확인하세요."
             )
 
 

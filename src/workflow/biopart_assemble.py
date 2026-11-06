@@ -31,6 +31,7 @@ KRIBB 6단계 조합 조립 워크플로우를 제공합니다.
 
 from pathlib import Path 
 from typing import List, Dict, Any, Optional
+import copy
 import json
 import pandas as pd
 from pydna.dseqrecord import Dseqrecord
@@ -202,23 +203,31 @@ class BiopartWorkflow(WorkflowBase):
         # fragment가 하나면 **이을 것이 없다** — 그 조각이 곧 module이다.
         # Gibson only(부품 1개)에서 양 끝 vector homology가 프라이머 tail로 흡수되면
         # module 전체가 단일 PCR 산물이 되고, 조립 상대는 선형화된 벡터다(삽입 단계).
-        # pydna에 조각 하나를 넘기면 겹칠 상대가 없어 빈 결과가 나오므로 여기서 끊는다.
+        # pydna에 조각 하나를 넘기면 겹칠 상대가 없어 빈 결과가 나오므로 조립만 건너뛴다.
+        #
+        # ⚠️ **여기서 함수를 빠져나가면 안 된다.** 2026-11-04에 `return target[0]`으로
+        #    끊었더니 아래 **P6 feature 기입까지 통째로 건너뛰어** module/construct에
+        #    파츠 feature가 하나도 안 남았다(실측: 부품 4개는 8개, 부품 1개는 0개).
+        #    그 결과 벡터맵에서 파츠를 눌러도 자리를 못 잡았다("not in the case you are
+        #    viewing"). 조립은 건너뛰되 **후처리는 똑같이 태운다.**
         if len(target) == 1 and assembly_type == "linear":
             print(f"  · fragment 1개({target[0].name}) — 이을 접합부가 없어 그대로 module로 씁니다")
-            return target[0]
+            # 조립 경로의 `results[0]`는 **새 객체**다. 여기서 입력을 그대로 쓰면 아래
+            # feature 기입이 prepared part 레코드를 직접 건드리게 되므로 사본을 쓴다.
+            record = copy.deepcopy(target[0])
+        else:
+            try:
+                results = assembler.assemble(target, assembly_type=assembly_type,
+                                             **(akw2 if method.lower() == "golden_gate" else {}))
+            except Exception as e:
+                print(f"  ⚠️  조립 실패: {e}\n")
+                return None
 
-        try:
-            results = assembler.assemble(target, assembly_type=assembly_type,
-                                         **(akw2 if method.lower() == "golden_gate" else {}))
-        except Exception as e:
-            print(f"  ⚠️  조립 실패: {e}\n")
-            return None
+            if not results:
+                print("  ⚠️  조립 실패\n")
+                return None
 
-        if not results:
-            print("  ⚠️  조립 실패\n")
-            return None
-
-        record = results[0]
+            record = results[0]
 
         # 조립 산물에 효소 사이트가 남았는지 알린다(차단 X).
         # 접합부에서 인식서열이 새로 생기는 경우가 실제로 있다(vector overhang + 인접 부품).

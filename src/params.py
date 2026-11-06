@@ -71,6 +71,27 @@ _SOFT_PRIMER_LEN_MIN = 15
 _SOFT_GC_RANGE = (20.0, 80.0)
 _SOFT_GIBSON_OVERLAP_RANGE = (15, 40)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Tm 선언값의 **하드 입력 제한** (2026-11-05 Y11)
+# ─────────────────────────────────────────────────────────────────────────────
+# 예전 구조는 유저 설계창(`tm_min/tm_max`) **바깥에 판정창을 하나 더** 뒀다
+# (`qc_tm_min/max` 45~85℃, `qc_gc_ideal_*` 40~60%). 그 구조가 2026-11-04부터 같은
+# 버그를 세 번 냈다 — Y6(Tm) · Y7(GC) · Y11(길이). 두 창이 어긋나면 ① 설계 목표대로
+# 만든 프라이머를 판정이 떨어뜨리거나 ② 유저가 좁힌 창을 판정이 못 보고 넘겼다.
+# 길이 축은 아예 판정 쪽이 `15`/`30` **리터럴**이어서 유저가 Q5(상한 26nt)를 골라도
+# 경고는 30 기준으로 떴다 — 유저 설정과 경고가 따로 노는 상태였다.
+#
+# → 창을 **하나로** 합친다. 판정도 유저가 선언한 값(`tm_*` `gc_*` `primer_len_*`)으로
+#   한다. 판정창이 맡던 "물리적으로 PCR이 성립하지 않는 구간 차단"은 **입력 단계**로
+#   옮긴다 — 애초에 못 넣게 하면 판정에서 걸러낼 필요가 없고, 창이 하나뿐이면
+#   어긋남이 구조적으로 불가능하다.
+#
+# 경계 근거: 35℃ 아래는 annealing 단계에서 프라이머가 주형에 붙어 있지 못하고,
+# 80℃ 위는 extension 온도(68~72℃)를 넘어 annealing 단계 자체가 뜻을 잃는다.
+# ⚠️ 두 값 모두 wet-lab 확정 대상이다.
+TM_INPUT_MIN = 35.0
+TM_INPUT_MAX = 80.0
+
 # yeast HR homology arm의 **하드** 범위. Gibson(소프트 권장)과 달리 하드로 둔 이유는
 # 범위를 벗어나면 그 방법이 성립하지 않기 때문이다 — 너무 짧으면 세포의 재조합 기구가
 # 상동성을 인식하지 못하고, 너무 길면 fragment가 이웃 서열로 뒤덮여 조립 단위가 흐려진다.
@@ -165,28 +186,101 @@ SITE_PAD_SEQ_DEFAULT = "AATACC"
 # 범위의 **위치**이지 폭이 아니다.
 #
 # 회신이 오면 **이 딕셔너리만 고친다** — params.py 단일 지점 원칙.
+# ─────────────────────────────────────────────────────────────────────────────
+# NEB Tm Calculator 재현 조건
+#
+# ## 왜 이 값들인가 — 증빙
+#
+# NEB Tm Calculator(https://tmcalculator.neb.com)는 **제품마다 다른 Tm**을 낸다.
+# 버퍼 조성이 다르기 때문인데, Q5/Phusion 버퍼 조성은 **NEB 영업비밀로 비공개**다.
+# 그래서 오랫동안 오프라인 재현이 안 되는 것으로 알려져 있었다.
+#
+# 해법은 pydna 이슈 #237(https://github.com/pydna-group/pydna/issues/237)에 있다.
+# **Biopython `MeltingTemp`의 저자 본인(MarkusPiotrowski)**이 직접 맞는 인자를 찾아 올렸다.
+# 핵심 통찰 두 가지:
+#   · 버퍼 조성을 **몰라도 된다.** Na + K + Tris/2 가 하나의 1가 염 농도로 합산되므로,
+#     비공개인 Q5/Phusion도 K/Tris 조합으로 같은 유효 농도를 만들면 값이 맞는다.
+#   · **NEB는 Taq에 Mg2+ 보정을 하지 않는다.** 그래서 Taq만 Mg=0이다.
+#     (Mg=0이면 Biopython은 dNTPs도 무시한다)
+#     Phusion만 염보정이 Schildkraut(saltcorr=1)이고 나머지는 Owczarzy(6)인데,
+#     이는 NEB 자신의 API 문서와도 일치한다 —
+#     "For Phusion DNA Polymerases, the salt correction of Schildkraut is used."
+#
+# ## 자체 검증 (2026-11-05, NEB Tm API v0.19.0)
+#
+# 실제 Bioparts 파츠 말단 160개(길이 18~36nt)를 NEB API와 대조:
+#
+#     제품       RMSE     최대오차   ±1℃ 내   Ta 일치
+#     Taq        0.29℃    0.50      100%     100%
+#     Phusion    0.62℃    1.45       88%      95%
+#     Q5         0.35℃    0.72      100%     100%
+#
+# ⚠️ **함정**: NEB API의 `conc` 파라미터는 **nM이 아니라 µM**이다. nM로 알고 500을
+#    넣으면 1000배 과대평가라 Tm이 ~8℃ 높게 나온다(2026-11-05에 실제로 겪었다).
+#    재검증할 때 반드시 µM으로 보낼 것 — Q5/Phusion은 0.5, Taq은 0.2.
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: polymerase별 Tm 계산 조건. `DesignParams` 필드와 같은 이름을 쓴다.
+NEB_TM_CONDITIONS: Dict[str, Dict[str, Any]] = {
+    # Taq: 버퍼 조성이 **공개**돼 있다(10mM Tris + 50mM KCl + 1.5mM MgCl2).
+    #      그런데 NEB 계산기는 Taq에 Mg 보정을 하지 않으므로 mg_mM=0으로 둔다.
+    "taq":     {"na_mM": 0.0, "k_mM": 50.0, "tris_mM": 10.0, "mg_mM": 0.0,
+                "dntp_mM": 0.8, "tm_saltcorr": 6, "primer_conc_nM": 200.0},
+    # Phusion: HF/GC 버퍼 조성 비공개. Schildkraut 염보정(NEB 문서가 명시).
+    "phusion": {"na_mM": 0.0, "k_mM": 50.0, "tris_mM": 25.0, "mg_mM": 1.5,
+                "dntp_mM": 0.8, "tm_saltcorr": 1, "primer_conc_nM": 500.0},
+    # Q5: 버퍼 조성 비공개. Owczarzy 염보정 + Mg 보정 포함.
+    "q5":      {"na_mM": 0.0, "k_mM": 50.0, "tris_mM": 10.0, "mg_mM": 1.5,
+                "dntp_mM": 0.8, "tm_saltcorr": 6, "primer_conc_nM": 500.0},
+}
+
+#: polymerase별 권장 어닐링 온도(Ta) 규칙. (종류, 오프셋, 상한℃)
+#  NEB 계산기가 쓰는 규칙이며 위 검증에서 Ta 일치율 95~100%로 확인했다.
+#  Ta는 **두 프라이머 중 낮은 Tm**을 기준으로 한다.
+NEB_TA_RULES: Dict[str, tuple] = {
+    "taq":     ("offset", -5.0, 68.0),   # min(Tm1,Tm2) - 5, 최대 68℃
+    "phusion": ("phusion", 0.0, 72.0),   # 0.93 * min(Tm1,Tm2) + 7.5, 최대 72℃
+    "q5":      ("offset", +1.0, 72.0),   # min(Tm1,Tm2) + 1, 최대 72℃
+}
+
+
 PRESETS: Dict[str, Dict[str, Any]] = {
-    # 표준 Taq. 버퍼 조성이 공개돼 있는 유일한 케이스(10mM Tris·50mM KCl·1.5mM MgCl2).
-    "taq": {
-        "na_mM": 50.0,             # 50 mM KCl (문서화된 값)
-        "primer_conc_nM": 200.0,   # 표준 프로토콜 0.2 µM
-        "tm_min": 50.0,            # ⚠️ 잠정
-        "tm_max": 60.0,            # ⚠️ 잠정
-    },
-    # Phusion (고정확도). HF/GC 버퍼 조성은 비공개.
-    "phusion": {
-        "na_mM": 50.0,             # ⚠️ 잠정 — 버퍼 조성 비공개라 표준값으로 둠
-        "primer_conc_nM": 500.0,   # 프로토콜 0.5 µM
-        "tm_min": 55.0,            # ⚠️ 잠정
-        "tm_max": 65.0,            # ⚠️ 잠정
-    },
-    # Q5 (고정확도). Q5 Reaction Buffer 조성은 비공개.
-    "q5": {
-        "na_mM": 50.0,             # ⚠️ 잠정 — 버퍼 조성 비공개라 표준값으로 둠
-        "primer_conc_nM": 500.0,   # 프로토콜 0.5 µM
-        "tm_min": 57.0,            # ⚠️ 잠정
-        "tm_max": 67.0,            # ⚠️ 잠정
-    },
+    # ⚠️ 버퍼 조건은 **`NEB_TM_CONDITIONS`에서 끌어온다** — 같은 값을 두 곳에 적지 않는다.
+    #    (2026-11-05 이전에는 셋 다 na_mM=50 '잠정'이라 효소를 바꿔도 Tm이 거의 안 움직였다)
+    #    여기 남는 건 **Tm 선언창**뿐이고, 그건 여전히 wet-lab 확정 대상이다.
+    # 2026-11-05 Y10-b — Tm 창을 NEB 축에 맞게 재설정했다.
+    #   이전 창(50~60 / 55~65 / 57~67)은 **primer3 축 시절 숫자**였다. 축을 NEB로 옮기면
+    #   같은 프라이머의 Tm이 제품별로 8.86℃까지 벌어지는데, 창은 그대로 둬서 "Taq은
+    #   창이 너무 뜨겁고 Q5는 너무 차가운" 상태였다.
+    #   NEB 축에서 제품별로 실제 도달 가능한 구간 + NEB가 권고하는 Ta 대역을 기준으로 잡았다.
+    #     · Taq      55~65  (Ta = min−5 → 50~60℃, Taq의 일반적 Ta 대역)
+    #     · Phusion  60~72  (Ta = 0.93·min+7.5 → 63.3~74.5, 상한 72로 캡)
+    #     · Q5       60~72  (Ta = min+1 → 61~73, 상한 72로 캡)
+    #   Phusion·Q5가 같은 창인 건 우연이 아니다 — 둘 다 high-fidelity 고온 효소라
+    #   NEB 권고 Ta 대역이 겹친다. 갈리는 건 Tm 계산 쪽이다(saltcorr·Tris 조성).
+    #
+    # **길이창도 프리셋이 정한다** — Tm 창과 커플링돼 있기 때문이다.
+    #   제품마다 Tm 자가 다르므로(같은 프라이머가 Taq 54.5 / Q5 62.3℃) 같은 Tm에 닿는 데
+    #   필요한 결합부 길이가 다르다. 길이창을 전 제품 공통(18/20/25)으로 두면 Tm 창만
+    #   제품별로 갈려서, **Taq·Phusion은 선언한 창에 닿지 못해 상시 경고**가 떴다.
+    #
+    #   특히 병목은 `primer_len_max`가 아니라 **`primer_len_opt`**였다. primer3의 목적함수가
+    #   |길이 − OPT_SIZE|에 벌점을 주므로, 상한만 30으로 올려도 반환되는 후보 30쌍이
+    #   20nt 근처에 몰려 26~28nt 후보가 상위에 안 올라온다. 실측(4부품 module, AT-rich
+    #   접합부 포함):
+    #     Taq  opt20/max25 → 경고 1/2 · opt20/max30 → 1/2 · **opt24/max30 → 0/2**
+    #   즉 상한을 36까지 올려도 opt를 안 올리면 해결되지 않았다.
+    #
+    #   값은 "경고 0이 되는 최소"로 잡았다 — 길이는 합성 단가이므로 넉넉하게 둘 이유가 없다.
+    "taq":     {**NEB_TM_CONDITIONS["taq"],
+                "tm_min": 55.0, "tm_max": 65.0,       # ⚠️ 창은 잠정 (wet-lab 확정 대상)
+                "primer_len_opt": 24, "primer_len_max": 30},
+    "phusion": {**NEB_TM_CONDITIONS["phusion"],
+                "tm_min": 60.0, "tm_max": 72.0,       # ⚠️ 창은 잠정
+                "primer_len_opt": 22, "primer_len_max": 30},
+    "q5":      {**NEB_TM_CONDITIONS["q5"],
+                "tm_min": 60.0, "tm_max": 72.0,       # ⚠️ 창은 잠정
+                "primer_len_opt": 20, "primer_len_max": 26},
 }
 
 
@@ -199,11 +293,21 @@ class DesignParams:
     """
 
     # ── PCR 조건 (Tm 계산의 전제) ────────────────────────────────────────────
-    # ⚠️ 이 두 값이 Tm의 '단위'를 정한다. 같은 서열도 염/농도가 다르면 Tm이 몇 도씩 달라진다.
+    # ⚠️ 이 값들이 Tm의 '단위'를 정한다. 같은 서열도 염/농도가 다르면 Tm이 몇 도씩 달라진다.
     #    "Tm 70℃"라는 말이 랩마다 다른 프라이머를 가리키는 원인.
-    #    현재 기본값의 근거는 약하다(sequence_analysis.calculate_tm의 TODO 참고) → 회신으로 확정.
-    na_mM: float = 50.0            # Na+ 농도 (mM)
-    primer_conc_nM: float = 250.0  # 프라이머(올리고) 농도 (nM)
+    #
+    # 2026-11-05: **NEB Tm Calculator 재현 조건으로 교체**(`NEB_TM_CONDITIONS` 참고).
+    #    polymerase를 고르면 이 값들이 따라오고, 그 결과 Tm이 실제로 달라진다.
+    #    (그 전에는 셋 다 na_mM=50으로 눌려 있어 효소 선택이 Tm에 거의 영향이 없었다)
+    na_mM: float = 0.0             # Na+ 농도 (mM) — NEB 버퍼는 K+/Tris 기반이라 0이다
+    k_mM: float = 50.0             # K+ 농도 (mM)
+    tris_mM: float = 10.0          # Tris 농도 (mM) — 1가 염 환산에 Tris/2가 더해진다
+    mg_mM: float = 1.5             # Mg2+ 농도 (mM) — Taq 경로는 0(아래 설명)
+    dntp_mM: float = 0.8           # dNTP 총 농도 (mM) — Mg2+를 킬레이트해 유효 Mg를 낮춘다
+    tm_saltcorr: int = 6           # 염보정 방식 (Biopython MeltingTemp) — 6=Owczarzy, 1=Schildkraut
+    # 기본값은 **Q5 조건**이다(위 버퍼 필드와 한 벌). 조립용 증폭은 proofreading
+    # 효소를 쓰는 것이 표준이고(Taq 오류율의 ~1/280), 실사용도 Q5/Phusion에 몰린다.
+    primer_conc_nM: float = 500.0  # 프라이머(올리고) 농도 (nM) — Q5 프로토콜 0.5 µM
 
     # ── 프라이머 설계 목표 ───────────────────────────────────────────────────
     # ── 프라이머 Tm 범위 — **설계 목표이자 판정 기준** (2026-09-23 통합) ──────
@@ -218,7 +322,9 @@ class DesignParams:
     # ⚠️ 유저 입력이 판정을 겸해도 되는 이유: 2026-07-13의 "전부 red" 실패는
     #    **설계 목표와 판정 기준이 다른 값이었기 때문**에 생겼다. 같은 범위를 쓰면
     #    "내가 겨냥한 곳에 만들어 놓고 내가 떨어뜨리는" 모순 자체가 없다.
-    #    (GC는 축이 달라 여전히 분리한다 — 아래 gc_* vs qc_gc_*)
+    #    2026-11-05(Y11): GC·길이 축도 같은 처방으로 합쳤다. 판정창(`qc_tm_*`,
+    #    `qc_gc_*`, `qc_gc_ideal_*`)은 제거하고 물리 경계는 입력 제한
+    #    (`TM_INPUT_MIN/MAX`)으로 옮겼다 — 위 상수 블록 참고.
     tm_min: float = 55.0
     tm_max: float = 65.0
     primer_len_min: int = 18
@@ -227,7 +333,11 @@ class DesignParams:
     gc_min: float = 20.0
     gc_max: float = 80.0
     max_poly_x: int = 8            # 같은 염기 연속 허용 개수
-    terminal_tm_min: float = 55.0  # module 끝단(tail 없는) 프라이머를 이 Tm까지 연장
+    # ⚠️ **primer3 축** (2026-11-05 통일). 이 값은 `_fit_amplicon`이 `calculate_tm`
+    #    결과와 직접 비교하는 절대 Tm이라 Biopython 축에 묶여 있었다. 자를 primer3로
+    #    통일하면서 뜻을 보존하려고 +4℃ 옮겼다(실측 오프셋 +4.27, 자세한 근거는
+    #    `basic/sequence_analysis.calculate_tm` 독스트링).
+    terminal_tm_min: float = 59.0  # module 끝단(tail 없는) 프라이머를 이 Tm까지 연장
 
     # ── Golden Gate (부품 → 모듈) ────────────────────────────────────────────
     # overhang 길이와 spacer 길이는 여기 없다 — **효소가 정하는 값**이라 자유 파라미터가 아니다.
@@ -289,6 +399,16 @@ class DesignParams:
     #    anneal(주형 결합부) Tm과 전체 프라이머(5' tail 포함) Tm의 차이를 이 값 이하로
     #    수렴시키려고 amplicon을 늘린다. 값을 키우면 프라이머가 짧아지고 작아지면 길어진다.
     tm_diff_max: float = 5.0
+    # ⚠️ 위 `tm_diff_max`와 **다른 축**이다. 이쪽은 fwd와 rev **두 프라이머 사이**의
+    #    Tm 차이다(같은 프라이머의 anneal↔full이 아니다).
+    #    왜 필요한가: annealing 온도는 `ta_recommended()`가 **낮은 쪽 Tm 기준**으로
+    #    정한다. 두 Tm이 벌어지면 그 Ta에서 **뜨거운 쪽 프라이머가 자기 Tm보다 훨씬
+    #    낮은 온도에서 돌아** 비특이 결합이 늘어난다. 실측(2026-11-05, 조성 3 × 경로 2
+    #    × 프리셋 3 = 69쌍): 중앙 0.89℃인데 최대 **11.68℃**였고 5℃ 초과가 17%였다.
+    #    최악 케이스는 GG 벡터 homology 프라이머에 몰렸다(길이가 overhang·spacer에
+    #    묶여 Tm을 맞출 자유도가 적다).
+    #    ⚠️ 경계값은 통상 권장치(≤5℃) 기반 잠정치다 — wet-lab 확정 대상.
+    pair_tm_diff_max: float = 5.0
     # anneal 최소 길이. 이보다 짧으면 비특이 결합 위험이 커진다.
     # ⚠️ 고GC 구간에서 Tm을 낮출 수 있는 **유일한 레버의 바닥**이기도 하다(GG 삽입 경로).
     amp_min: int = 15
@@ -335,38 +455,12 @@ class DesignParams:
     # 곳에 만들어 놓고 내가 떨어뜨리는" 모순은 구조적으로 불가능하다 — 2026-07-13의
     # 실패는 판정창이 설계창보다 **좁거나 어긋나서** 생긴 것이고, 포함 관계면 그 방향이
     # 막힌다. `validate()`가 포함 관계를 검사해 어긋나면 경고한다.
-    # 기본값은 연구실 실사용 기준(50~80℃): 그 밖이면 PCR 자체가 성립하기 어렵다.
-    qc_tm_min: float = 50.0        # anneal Tm 하한 (℃) — 설계창 tm_min과 축이 다르다
-    qc_tm_max: float = 80.0        # anneal Tm 상한 (℃)
-    # ── GC 판정창 — Tm과 **똑같은 처방**(2026-11-05 재분리) ──────────────────
-    # 2026-11-04에 Tm을 분리하고 나니 같은 모순이 GC 축에 그대로 남아 있었다:
-    # 설계창은 [20, 80]%인데 판정창이 [35, 60]%라, primer3가 **설계 목표대로** 집어온
-    # 28% 프라이머를 판정이 떨어뜨렸다(효모 AT-rich 영역에서 흔한 값이다). 게다가
-    # tail 없는 끝단 프라이머만 violation(red)이 되어(`primer_design` anneal_gate)
-    # **같은 접합부가 arm 운반자에 따라 적/황으로 갈렸다.**
-    #
-    # 그런데 GC는 Tm과 사정이 하나 다르다. **설계자가 고칠 수 없는 값**이다 —
-    # 끝단 프라이머는 `terminal_tm_min`까지 길이를 늘려 Tm은 맞출 수 있지만, 늘려도
-    # 그 구간의 GC%는 거의 그대로다(템플릿의 성질이다). 그래서 차단창을 설계창까지
-    # 넓히면 GC 신호가 통째로 사라지는 게 문제였다.
-    #
-    # → **층을 둘로 나눈다.** 같은 파일 `duplex_safe_bp`/`duplex_risky_bp`가 쓰는
-    #   "차단하지는 않는다 — 판단은 실험자 몫이다. 대신 등급을 숨기지 않는다"와 같은 구조다.
-    #     · qc_gc_min/max       — **차단창(red)**. 설계창을 포함한다(= PCR 자체가
-    #                             성립하기 어려운 구간만 막는다). `validate()`가 포함 검사.
-    #     · qc_gc_ideal_min/max — **경고창(yellow)**. 관례적 이상 구간. 차단은 안 하되
-    #                             AT/GC-rich 프라이머를 초록으로 숨기지도 않는다.
-    #   경고창은 운반자와 무관하게 항상 warnings로 가므로 적/황 갈림도 같이 사라진다.
-    #
-    # 35%가 틀린 컷오프라는 건 추측이 아니라 **이 프로젝트의 자체 실측**이다.
-    # 접합부 설계기(`workflow/junction_plan` 모듈 docstring "품질 기준" 절)가 실제 파츠
-    # 말단 창으로 같은 비교를 이미 해놨다: GC 35~60% 기준은 고정 45bp에서 68%만
-    # 통과시켰고, GC 20~80%로 바꾸니 99.3%가 통과했다. 접합부 축은 그때 20~80%로
-    # 옮겼는데 **프라이머 판정축만 35%에 남아** 있었다. 이 분리가 그 누락을 메운다.
-    qc_gc_min: float = 20.0        # anneal GC 차단 하한 (%) — 설계창 gc_min을 포함해야 한다
-    qc_gc_max: float = 80.0        # anneal GC 차단 상한 (%) — 설계창 gc_max를 포함해야 한다
-    qc_gc_ideal_min: float = 40.0  # anneal GC 경고 하한 (%) — 밖이면 yellow(차단 아님)
-    qc_gc_ideal_max: float = 60.0  # anneal GC 경고 상한 (%)
+    # ⚠️ Tm·GC 판정창(`qc_tm_*` / `qc_gc_*` / `qc_gc_ideal_*`)은 **2026-11-05(Y11)에
+    #    제거**했다. 판정은 유저 선언창(`tm_min/tm_max`, `gc_min/gc_max`)이 직접 맡고,
+    #    물리 경계는 입력 제한(`TM_INPUT_MIN/MAX`)이 맡는다 — 파일 상단 상수 블록 참고.
+    #    아래 ΔG 컷오프는 **범위가 아니라 물리량**이라 그대로 남는다: 유저가 선언하는
+    #    값이 아니고(설정 화면에 없다), hairpin/dimer는 ΔG 하나로 PCR이 안 걸리는
+    #    신호라 "선언창을 벗어났나"와 무관하게 알려야 한다.
     qc_hairpin_dg_3prime: float = -2.0    # 3'말단 관여 hairpin (kcal/mol, 더 음수면 문제)
     qc_hairpin_dg_internal: float = -3.0  # 내부 hairpin
     qc_dimer_dg: float = -5.0             # self/cross dimer
@@ -429,17 +523,36 @@ class DesignParams:
                 f"tm_min({self.tm_min}) >= tm_max({self.tm_max}): Tm 범위는 "
                 f"[하한, 상한] 순서여야 하고 폭이 0보다 커야 합니다."
             )
-        if self.qc_tm_min <= 0 or self.qc_tm_max <= 0:
+        # 선언창이 곧 판정창이므로(Y11) 물리 경계는 **여기서** 막는다.
+        # 판정에서 걸러내는 게 아니라 애초에 못 넣게 한다 — GUI·Galaxy XML의 입력
+        # min/max와 같은 숫자이고, 이 검사가 GUI를 거치지 않는 호출의 방어선이다.
+        if self.tm_min < TM_INPUT_MIN or self.tm_max > TM_INPUT_MAX:
             errs.append(
-                f"qc_tm_min/qc_tm_max({self.qc_tm_min}/{self.qc_tm_max}): 0보다 커야 합니다."
+                f"Tm 범위 [{self.tm_min:g}, {self.tm_max:g}]℃가 입력 허용 범위 "
+                f"[{TM_INPUT_MIN:g}, {TM_INPUT_MAX:g}]℃를 벗어납니다 — "
+                f"{TM_INPUT_MIN:g}℃ 아래는 annealing 단계에서 프라이머가 주형에 "
+                f"붙어 있지 못하고, {TM_INPUT_MAX:g}℃ 위는 extension 온도를 넘어 "
+                f"annealing 단계가 뜻을 잃습니다."
             )
-        elif self.qc_tm_min >= self.qc_tm_max:
+        # ⚠️ 1가 염은 **합산**으로 본다(2026-11-05). NEB 버퍼는 Na+가 아니라 K+/Tris
+        #    기반이라 `na_mM`만 보면 정상 설정(Na=0, K=50, Tris=10)을 오류로 막는다.
+        #    Biopython MeltingTemp의 합산 규칙과 같다: Na + K + Tris/2.
+        _monovalent = self.na_mM + self.k_mM + self.tris_mM / 2.0
+        for _n, _v in (("na_mM", self.na_mM), ("k_mM", self.k_mM),
+                       ("tris_mM", self.tris_mM), ("mg_mM", self.mg_mM),
+                       ("dntp_mM", self.dntp_mM)):
+            if _v < 0:
+                errs.append(f"{_n}={_v}: 음수일 수 없습니다.")
+        if _monovalent <= 0:
             errs.append(
-                f"qc_tm_min({self.qc_tm_min}) >= qc_tm_max({self.qc_tm_max}): "
-                f"판정창도 [하한, 상한] 순서여야 합니다."
+                f"1가 염 농도가 0입니다 (Na {self.na_mM} + K {self.k_mM} + "
+                f"Tris/2 {self.tris_mM / 2.0} = {_monovalent}) — Tm을 계산할 수 없습니다."
             )
-        if self.na_mM <= 0:
-            errs.append(f"na_mM={self.na_mM}: 0보다 커야 합니다(Tm 계산 불가).")
+        if self.tm_saltcorr not in (1, 2, 3, 4, 5, 6, 7):
+            errs.append(
+                f"tm_saltcorr={self.tm_saltcorr}: Biopython MeltingTemp의 염보정 "
+                f"방식 번호여야 합니다(1~7). NEB 재현값은 6(Owczarzy) 또는 1(Schildkraut)."
+            )
         if self.primer_conc_nM <= 0:
             errs.append(f"primer_conc_nM={self.primer_conc_nM}: 0보다 커야 합니다(Tm 계산 불가).")
 
@@ -513,6 +626,8 @@ class DesignParams:
         # ── 하드: 프라이머 길이 수렴 / 판정 축 ──
         if self.tm_diff_max < 0:
             errs.append(f"tm_diff_max={self.tm_diff_max}: 음수일 수 없습니다.")
+        if self.pair_tm_diff_max < 0:
+            errs.append(f"pair_tm_diff_max={self.pair_tm_diff_max}: 음수일 수 없습니다.")
         if self.spacer_mode not in ("vector_homology", "library"):
             errs.append(
                 f"spacer_mode={self.spacer_mode!r}: 'vector_homology' 또는 'library'만 됩니다."
@@ -531,32 +646,6 @@ class DesignParams:
                 f"amp_min={self.amp_min}bp가 열역학 계산 상한 {THERMO_MAX_LEN}bp를 넘습니다 "
                 f"— 이 길이로는 프라이머 품질 계산이 불가능합니다."
             )
-        if not (0.0 <= self.qc_gc_min <= 100.0) or not (0.0 <= self.qc_gc_max <= 100.0):
-            errs.append(
-                f"qc_gc_min/qc_gc_max({self.qc_gc_min}/{self.qc_gc_max})는 0~100 사이여야 합니다 "
-                f"(단위는 %. 0~1 분수가 아닙니다)."
-            )
-        elif self.qc_gc_min > self.qc_gc_max:
-            errs.append(f"qc_gc_min({self.qc_gc_min}) > qc_gc_max({self.qc_gc_max}).")
-        if (not (0.0 <= self.qc_gc_ideal_min <= 100.0)
-                or not (0.0 <= self.qc_gc_ideal_max <= 100.0)):
-            errs.append(
-                f"qc_gc_ideal_min/qc_gc_ideal_max"
-                f"({self.qc_gc_ideal_min}/{self.qc_gc_ideal_max})는 0~100 사이여야 합니다 "
-                f"(단위는 %. 0~1 분수가 아닙니다)."
-            )
-        elif self.qc_gc_ideal_min > self.qc_gc_ideal_max:
-            errs.append(
-                f"qc_gc_ideal_min({self.qc_gc_ideal_min}) > "
-                f"qc_gc_ideal_max({self.qc_gc_ideal_max})."
-            )
-        # 경고창이 차단창 밖으로 나가면 "경고도 안 떴는데 차단되는" 구간이 생긴다.
-        elif self.qc_gc_ideal_min < self.qc_gc_min or self.qc_gc_ideal_max > self.qc_gc_max:
-            errs.append(
-                f"GC 경고창 [{self.qc_gc_ideal_min}, {self.qc_gc_ideal_max}]%가 차단창 "
-                f"[{self.qc_gc_min}, {self.qc_gc_max}]% 밖으로 나갑니다 — 경고 없이 "
-                f"바로 차단되는 구간이 생깁니다. 경고창은 차단창 안에 있어야 합니다."
-            )
         for _n, _v in (("qc_hairpin_dg_3prime", self.qc_hairpin_dg_3prime),
                        ("qc_hairpin_dg_internal", self.qc_hairpin_dg_internal),
                        ("qc_dimer_dg", self.qc_dimer_dg),
@@ -571,10 +660,7 @@ class DesignParams:
         # ⚠️ 판정 컷오프는 원래 코드에서 **분수**(0.35/0.60)였고 필드로 빼면서 %로 통일했다.
         #    옛 값을 그대로 넣으면 0.35%가 되어 **게이트가 사실상 꺼진 채로 조용히 통과**한다.
         #    0 초과 1 미만은 GC 백분율로 의미가 없으므로 단위 실수로 보고 차단한다.
-        for _n, _v in (("gc_min", self.gc_min), ("gc_max", self.gc_max),
-                       ("qc_gc_min", self.qc_gc_min), ("qc_gc_max", self.qc_gc_max),
-                       ("qc_gc_ideal_min", self.qc_gc_ideal_min),
-                       ("qc_gc_ideal_max", self.qc_gc_ideal_max)):
+        for _n, _v in (("gc_min", self.gc_min), ("gc_max", self.gc_max)):
             if 0.0 < _v < 1.0:
                 errs.append(
                     f"{_n}={_v}: 단위가 **%** 입니다(0~100). 0~1 분수를 넣은 것으로 보입니다 "
@@ -593,23 +679,9 @@ class DesignParams:
 
         # ── 소프트: 경고만 (차단하지 않음) ──
         warns: List[str] = []
-        # 판정창이 설계창을 품지 못하면 "겨냥한 곳에 만들어 놓고 내가 떨어뜨리는" 구간이
-        # 생긴다 — 2026-07-13 '전부 red'의 재발 경로다(§qc_tm_min).
-        if self.qc_tm_min > self.tm_min or self.qc_tm_max < self.tm_max:
-            warns.append(
-                f"Tm 판정창 [{self.qc_tm_min}, {self.qc_tm_max}]℃가 설계창 "
-                f"[{self.tm_min}, {self.tm_max}]℃를 다 덮지 못합니다 — "
-                f"설계 목표대로 만든 프라이머가 판정에서 떨어지는 구간이 생깁니다."
-            )
-        # GC도 같은 처방이다(2026-11-05). 차단창이 설계창을 품지 못하면 primer3가 설계
-        # 목표대로 집어온 프라이머가 red가 된다 — GC는 길이를 늘려도 못 고치는 값이라
-        # 그 구간에 걸린 프라이머에겐 손 쓸 방법이 없다.
-        if self.qc_gc_min > self.gc_min or self.qc_gc_max < self.gc_max:
-            warns.append(
-                f"GC 차단창 [{self.qc_gc_min}, {self.qc_gc_max}]%가 설계창 "
-                f"[{self.gc_min}, {self.gc_max}]%를 다 덮지 못합니다 — "
-                f"설계 목표대로 만든 프라이머가 판정에서 떨어지는 구간이 생깁니다."
-            )
+        # ⚠️ 여기 있던 "판정창 ⊇ 설계창" 포함 검사 2건(Tm·GC)은 **제거**했다 —
+        #    Y11에서 창을 하나로 합쳐 어긋남이 구조적으로 불가능해졌다. 포함 관계를
+        #    검사해야 하는 상태 자체가 사라진 것이 이 작업의 결과다.
         lo, hi = _SOFT_TM_RANGE
         if self.tm_min < lo or self.tm_max > hi:
             warns.append(
@@ -775,6 +847,44 @@ class DesignParams:
         """
         from basic.sequence_analysis import get_typeIIS_params  # 지연 import (순환 방지)
         return get_typeIIS_params(self.gg_enzyme)
+
+    def tm_kwargs(self) -> Dict[str, Any]:
+        """`basic.sequence_analysis.calculate_tm`에 넘길 버퍼 조건 한 벌.
+
+        인자가 7개라 호출부마다 풀어 쓰면 한 곳만 빠뜨려도 **그 자리만 다른 자로**
+        재게 된다 — 2026-11-05에 바로 그 "자가 두 개" 문제를 고쳤으므로 되살리지 않는다.
+        """
+        return {
+            "Na": self.na_mM, "dnac1": self.primer_conc_nM,
+            "K": self.k_mM, "Tris": self.tris_mM, "Mg": self.mg_mM,
+            "dNTPs": self.dntp_mM, "saltcorr": self.tm_saltcorr,
+        }
+
+    def ta_recommended(self, tm1: float, tm2: float) -> Optional[float]:
+        """NEB 권장 어닐링 온도. 조건이 등록된 polymerase가 아니면 None.
+
+        **두 프라이머 중 낮은 Tm**을 기준으로 한다(NEB 규칙). 규칙과 검증 근거는
+        `NEB_TA_RULES` 주석 참고 — 자체 검증에서 일치율 95~100%였다.
+        """
+        name = self.polymerase_key()
+        if name is None:
+            return None
+        kind, off, cap = NEB_TA_RULES[name]
+        lo = min(tm1, tm2)
+        val = 0.93 * lo + 7.5 if kind == "phusion" else lo + off
+        return min(val, cap)
+
+    def polymerase_key(self) -> Optional[str]:
+        """현재 버퍼 조건이 어느 NEB polymerase와 같은지. 없으면 None.
+
+        유저가 advanced에서 값을 직접 바꾸면 어느 제품도 아니게 되는데, 그때
+        Ta를 특정 제품 규칙으로 계산하면 **근거 없는 숫자**가 된다 → None을 돌려
+        호출부가 "권장 Ta 없음"으로 처리하게 한다.
+        """
+        for name, cond in NEB_TM_CONDITIONS.items():
+            if all(abs(getattr(self, k) - v) < 1e-9 for k, v in cond.items()):
+                return name
+        return None
 
     @property
     def tm_opt(self) -> float:

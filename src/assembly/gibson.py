@@ -98,6 +98,9 @@ class GibsonCloning(AssemblyBase):
         )
         # vector를 열 효소. params에 있으면 그걸 쓰고, 없으면 자동 선택.
         self.linearization_enzyme = getattr(self.params, "linearization_enzyme", None)
+        #: 마지막 `prepare_fragments` 설계 결과(anneal 서열·Tm·경고). 리포트가 읽는다.
+        #  `prepare_fragments`를 아직 안 돌렸으면 None이다.
+        self.last_primer_design = None
 
     def prepare_fragments(
         self,
@@ -213,6 +216,18 @@ class GibsonCloning(AssemblyBase):
         gibson_fwd, gibson_rev = self._validate_primer_length(
             insert, gibson_fwd, gibson_rev
         )
+
+        # 2026-11-05(Y10-b) — 설계기가 **이미 계산한** anneal Tm·경고를 밖으로 흘린다.
+        #   `vector_primers.csv`가 Tm/Ta를 적으려면 anneal 구간의 Tm이 필요한데,
+        #   완성된 프라이머에서 tail을 슬라이스로 되짚으면 `_validate_primer_length`가
+        #   길이를 건드린 경우 **틀린 구간을 재게 된다.**
+        #   반환 계약(`AssemblyBase`는 튜플)은 그대로 두고 인스턴스에 실어 보낸다 —
+        #   같은 질문(이 프라이머의 anneal Tm은?)에 두 개의 답을 만들지 않기 위함이다.
+        self.last_primer_design = {
+            "fwd_anneal": basic_fwd, "rev_anneal": basic_rev,
+            "fwd_tm": basic.get("fwd_tm"), "rev_tm": basic.get("rev_tm"),
+            "warnings": list(basic.get("warnings") or []),
+        }
 
         return gibson_fwd, gibson_rev
 
@@ -408,6 +423,13 @@ class GibsonCloning(AssemblyBase):
                 f"anneal 시작점을 양쪽 {shift}nt 안으로 밀어 설계했습니다 "
                 f"(잃은 염기는 프라이머 tail로 복원 — 산물은 동일)"
             )
+        # ⚠️ **설계기가 한 말을 버리지 않는다.** `design_basic_primers`는 요청한
+        #    Tm/GC/길이 범위로 primer3가 후보를 하나도 못 내면 **기본 범위로 폴백**하고
+        #    그 사실을 `warnings`로 돌려준다. 그런데 여기서 안 꺼내가는 바람에
+        #    Build Log·주문 시트 어디에도 안 떴다 — 유저 눈엔 "파라미터를 바꿨는데
+        #    결과가 그대로"로만 보였다(2026-11-05 실측: 운영 h101/h102가 Tm 창만
+        #    55~65 → 60~65로 다른데 완전히 동일한 프라이머를 냈다).
+        notes += list(basic.get("warnings") or [])
 
         return {
             "part_name": frag.name,

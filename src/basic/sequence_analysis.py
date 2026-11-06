@@ -235,8 +235,13 @@ def calculate_gc_content(
 
 def calculate_tm(
     sequence: str,
-    Na: float = 50.0,
-    dnac1: float = 250.0
+    Na: float = 0.0,
+    dnac1: float = 500.0,
+    K: float = 50.0,
+    Tris: float = 10.0,
+    Mg: float = 1.5,
+    dNTPs: float = 0.8,
+    saltcorr: int = 6,
 ) -> float:
     """
     Tm (melting temperature) 계산 (BioPython 기반)
@@ -244,14 +249,17 @@ def calculate_tm(
     ⭐ BioPython의 Tm_NN() 함수를 사용합니다 (Nearest-Neighbor method).
     ⭐ 프로젝트 전체에서 재사용!
 
-    BioPython은 SantaLucia (1998) 열역학 파라미터를 사용하여 정확한 Tm을 계산합니다.
+    ⚠️ **NEB Tm Calculator를 재현한다** (2026-11-05). 아래 "왜 NEB 축인가" 참고.
 
     Args:
         sequence: DNA 서열
-        Na: Na+ 농도 (mM, 기본값: 50 mM)
-        dnac1: DNA 농도 (nM, 기본값: 250 nM)
-        # TODO: Na, dnac1의 농도가 50mM, 250mM으로 잡은 evidence 확인
-        # Na+와 dna농도를 모르는 상황에서는 다른 방식의 tm계산을 사용해야하지 않는지 확인.
+        Na: Na+ 농도 (mM). NEB 버퍼는 K+/Tris 기반이라 **0이 기본**이다
+        dnac1: 프라이머 농도 (nM, 기본 500 = Q5 프로토콜 0.5 µM)
+        K: K+ 농도 (mM)
+        Tris: Tris 농도 (mM) — 1가 염 환산에 Tris/2가 더해진다
+        Mg: Mg2+ 농도 (mM). **Taq 경로는 0** — NEB가 Taq에 Mg 보정을 하지 않는다
+        dNTPs: dNTP 총 농도 (mM) — Mg2+를 킬레이트해 유효 Mg를 낮춘다
+        saltcorr: 염보정 방식 (6=Owczarzy, 1=Schildkraut). **Phusion만 1**
     Returns:
         Tm (°C)
 
@@ -270,24 +278,91 @@ def calculate_tm(
         True
 
     Notes:
-        - BioPython은 Nearest-Neighbor 방법을 사용하여 정확한 Tm 계산
-        - Wallace rule보다 정확 (±1°C vs ±5°C)
-        - Legacy 코드와 동일한 파라미터 사용 (Na=50, dnac1=250)
-        - legacy-src/v2/add_function_modules_v2.py (Line 669) 참조
+        ## 왜 NEB 축인가 — **자가 하나여야 하고, 그 자는 랩이 쓰는 자여야 한다**
+
+        이 함수는 하루에 두 번 바뀌었다. 기록을 남긴다.
+
+        ### 1단계 (2026-11-05 오전): Biopython → primer3
+
+        같은 `tm_min`이 **경로마다 다른 자로 읽히고 있었다**:
+          · gibson / yeast_hr → primer3에 `PRIMER_MIN_TM`으로 그대로 전달 → primer3 축
+          · golden_gate       → `_fit_amplicon`이 `calculate_tm`과 직접 비교 → Biopython 축
+        두 자는 같은 염·농도에서도 +4.27℃ 어긋났다(실측 3,100 표본). 그래서 **프라이머를
+        고르는 주체**인 primer3의 자로 통일했다.
+
+        ### 2단계 (2026-11-05 오후): primer3 → **NEB Tm Calculator 재현**
+
+        통일은 됐지만 그 자가 **랩이 쓰는 자가 아니었다.** 연구실은 NEB 계산기로 Ta를
+        잡는데, 우리 숫자는 거기서 몇 도씩 달랐다. 게다가 polymerase 선택이 설계에
+        거의 반영되지 않았다 — 프리셋 셋이 전부 `na_mM=50`이라 같은 프라이머의 Tm이
+        1.1℃밖에 안 움직였다.
+
+        NEB는 **제품마다 다른 Tm**을 낸다(버퍼가 다르므로). 그런데 Q5/Phusion 버퍼
+        조성은 **영업비밀로 비공개**라 오랫동안 오프라인 재현이 불가능하다고 알려져 있었다.
+
+        ### 해법과 증빙
+
+        pydna 이슈 #237(https://github.com/pydna-group/pydna/issues/237)에서
+        **Biopython `MeltingTemp`의 저자 본인(MarkusPiotrowski)**이 맞는 인자를 찾아 올렸다.
+        핵심 통찰:
+          · 버퍼 조성을 **몰라도 된다** — Na + K + Tris/2 가 하나의 1가 염 농도로 합산되므로
+            비공개인 Q5/Phusion도 K/Tris 조합으로 같은 유효 농도를 만들면 값이 맞는다.
+          · **NEB는 Taq에 Mg2+ 보정을 하지 않는다** → Taq만 `Mg=0`
+            (Mg=0이면 Biopython은 dNTPs도 무시한다).
+          · **Phusion만 Schildkraut 염보정**(`saltcorr=1`), 나머지는 Owczarzy(`6`).
+            NEB 자신의 API 문서와 일치한다 — "For Phusion DNA Polymerases, the salt
+            correction of Schildkraut is used."
+
+        조건값은 `params.NEB_TM_CONDITIONS`에 한 벌만 둔다(프리셋도 거기서 끌어온다).
+
+        ### 자체 검증 (2026-11-05, NEB Tm API v0.19.0)
+
+        실제 Bioparts 파츠 말단 160개(길이 18~36nt)를 NEB API와 대조:
+
+            제품       RMSE     최대오차   ±1℃ 내   Ta 일치
+            Taq        0.29℃    0.50      100%     100%
+            Phusion    0.62℃    1.45       88%      95%
+            Q5         0.35℃    0.72      100%     100%
+
+        ⚠️ **재검증할 때의 함정**: NEB API의 `conc` 파라미터는 **nM이 아니라 µM**이다.
+           nM로 알고 500을 넣으면 1000배 과대평가라 Tm이 ~8℃ 높게 나오고, 그걸
+           "NEB 고유 모델"로 오해하게 된다(2026-11-05에 실제로 겪었다).
+           Q5/Phusion은 `conc=0.5`, Taq은 `conc=0.2`로 보낼 것.
+
+        ⚠️ 재현이 안 되는 구현을 쓰지 말 것: `polymerase-tm`(PyPI)은 "0℃ 오차 재현"을
+           표방하지만 Owczarzy에 **길이 항이 없어** 길이가 길수록 벌어진다(잔차 길이상관
+           −0.95). 반대로 primer3/SantaLucia는 길이 항이 과해 +0.95로 뒤집힌다.
+           Biopython의 위 설정만이 양쪽 다 상관이 사라진다(Taq −0.08, Q5 +0.02).
+
+        ## 비-ACGT는 **조용히 넘기지 않는다**
+
+        모호 염기가 든 프라이머는 어차피 주문할 수 없고, 여기서 다른 방식으로 폴백하면
+        그 서열만 다른 자로 재게 되어 "자가 두 개"가 되살아난다. 그래서 명시적으로
+        실패시킨다. Bioparts 11,738종은 전부 ACGT라 실제 경로엔 영향이 없고,
+        서열 통계처럼 설계 판단이 아닌 자리는 호출부가 감싼다.
+
     """
     if not sequence:
         raise ValueError("서열이 비어있습니다")
 
     sequence = sequence.upper()
-    seq_obj = Seq(sequence)
+    bad = set(sequence) - set("ACGT")
+    if bad:
+        raise ValueError(
+            f"Tm은 ACGT로만 계산합니다 — 허용되지 않는 염기 {sorted(bad)}가 있습니다. "
+            f"(모호 염기가 든 프라이머는 주문할 수 없습니다)"
+        )
 
-    # BioPython의 Tm_NN() 사용
-    # - Nearest-Neighbor 방법 (SantaLucia 1998)
-    # - Na: sodium 농도 (mM)
-    # - dnac1: 올리고 농도 (nM)
-    tm_value = mt.Tm_NN(seq_obj, Na=Na, dnac1=dnac1)
-
-    return tm_value
+    # ⚠️ `dnac2=0`이 **중요하다.** Biopython은 비-자기상보 서열에서 유효 농도를
+    #    `dnac1 - dnac2/2`로 쓴다. dnac2를 dnac1과 같게 주면 농도가 절반이 되어
+    #    NEB와 어긋난다(2026-11-05에 이것 때문에 한참 헤맸다).
+    return mt.Tm_NN(
+        Seq(sequence),
+        nn_table=mt.DNA_NN3,      # SantaLucia 1998 unified (Allawi & SantaLucia 1997)
+        Na=Na, K=K, Tris=Tris, Mg=Mg, dNTPs=dNTPs,
+        dnac1=dnac1, dnac2=0,
+        saltcorr=saltcorr,
+    )
 
 
 # ── 효소 목록 (단일 정의) ────────────────────────────────────────────────────
@@ -689,7 +764,9 @@ def get_sequence_stats(sequence: str) -> Dict:
     return {
         'length': len(sequence),
         'gc_content': calculate_gc_content(sequence),
-        'tm': calculate_tm(sequence),
+        # 서열 통계는 **설계 판단이 아니다.** 모호 염기(N)가 있으면 Tm만 비우고
+        # 나머지 통계는 그대로 준다(calculate_tm은 그 경우 명시적으로 실패한다).
+        'tm': (calculate_tm(sequence) if not (set(sequence.upper()) - set("ACGT")) else None),
         'base_composition': base_composition,
         'restriction_sites': find_restriction_sites(sequence),
         'has_repeats': len(find_repeats(sequence, min_length=20)) > 0

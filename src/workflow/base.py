@@ -279,11 +279,29 @@ class WorkflowBase:
             "part_name", "restriction_enzyme",
             "left_oh_id", "left_oh", "right_oh_id", "right_oh",
             "forward_primer", "reverse_primer",
+            # 2026-11-05(Y10-b) — **주문 단위**가 몇-mer다. 서열 칸을 눈으로 세게 하면
+            #   오발주로 이어진다(특히 tail이 붙어 50nt를 넘는 조립용 프라이머).
+            #   ⚠️ 주문할 **실물 전체 길이**다 — tail 포함. anneal 길이는 `fwd_tm`/`rev_tm`이
+            #      가리키는 구간이고, 둘이 다르다는 건 `design_conditions.md`가 설명한다.
+            "fwd_mer", "rev_mer",
             # ⚠️ Tm은 두 가지를 **둘 다** 낸다. 조립용 프라이머는 [5' tail][anneal] 구조라
             #    "Tm 65℃"가 어느 쪽을 말하는지에 따라 완전히 다른 프라이머를 가리킨다.
             #      fwd_tm / rev_tm           : anneal(주형 결합부) 기준 — 값이 낮게 나오는 게 정상
             #      fwd_tm_full / rev_tm_full : 주문할 프라이머 전체 기준
-            "fwd_tm", "rev_tm", "fwd_tm_full", "rev_tm_full", "fwd_gc", "rev_gc",
+            "fwd_tm", "rev_tm", "fwd_tm_full", "rev_tm_full",
+            # 2026-11-05(Y10) — **권장 annealing 온도**. NEB 축으로 간 이유가 이것이다:
+            #   Tm을 NEB와 같게 재현해도 그 값을 PCR 조건으로 옮기는 규칙(Ta)이 없으면
+            #   유저는 여전히 "그래서 몇 도로 돌리냐"를 손으로 계산해야 한다.
+            #   효소별 규칙은 `params.NEB_TA_RULES`(Q5 min+1 / Phusion 0.93·min+7.5 / Taq min−5).
+            #   ⚠️ 기준은 **anneal Tm**(꼬리 제외)이다 — 주형에 실제로 붙는 부분이 결합을 정한다.
+            "ta",
+            # 2026-11-05(Y11) — **fwd·rev Tm 차이**. 위 `ta`와 **붙여서 읽어야** 뜻이
+            #   통한다: Ta는 낮은 쪽 Tm 기준으로 정해지므로, 이 값이 크면 그 Ta에서
+            #   뜨거운 쪽 프라이머가 자기 Tm보다 훨씬 낮은 온도에서 돌아 비특이 결합이
+            #   늘어난다. 선언창은 `pair_tm_diff_max`(기본 5℃)이고 초과하면 경고가 붙는다.
+            #   ⚠️ `tm_diff_max`(같은 프라이머의 anneal↔전체)와 **다른 축**이다.
+            "tm_diff",
+            "fwd_gc", "rev_gc",
             "fwd_hairpin_dg", "rev_hairpin_dg",
             "fwd_accessibility", "rev_accessibility",
             # 올리고 어닐링으로 만드는 fragment는 프라이머가 없다. 그 fragment의
@@ -291,7 +309,12 @@ class WorkflowBase:
             #   ⚠️ 빼두면 설계는 끝났는데 주문서에 안 실려 "만들 방법이 없는 fragment"가 된다
             #      (2026-10-25: vector homology spacer 2개가 이렇게 통째로 누락돼 있었다).
             "production", "oligo_top", "oligo_bottom", "oligo_len", "duplex_grade",
-            "amplicon_len", "tier", "passed", "warnings",
+            "amplicon_len", "tier", "passed",
+            # 2026-11-05(Y12) — **차단 사유**. 2026-11-05까지 이 컬럼이 아예 없어서
+            #   tier=red / passed=False가 떠도 **시트에는 이유가 없었다**(엔진은 계속
+            #   `violations`를 채우고 있었는데 리포트가 안 꺼내갔다). 차단은 경고보다
+            #   중한 신호인데 경고만 보이고 차단은 안 보이던 상태였다.
+            "violations", "warnings",
         ]
 
         def _pct(x):
@@ -299,6 +322,29 @@ class WorkflowBase:
 
         def _num(x, nd=2):
             return round(x, nd) if isinstance(x, (int, float)) else ""
+
+        def _mer(seq):
+            """주문할 프라이머 길이(nt) — 올리고 행처럼 프라이머가 없으면 비운다."""
+            return len(seq) if isinstance(seq, str) and seq else ""
+
+        def _ta(tm_f, tm_r):
+            """권장 Ta — 두 anneal Tm으로 효소 규칙을 적용한다.
+
+            파라미터가 NEB 프리셋 조성과 정확히 일치하지 않으면(랩에서 염을 바꿨을 때)
+            `ta_recommended`가 None을 돌려준다. 그때는 **추측해서 숫자를 적지 않고 비운다**
+            — 틀린 Ta는 없는 Ta보다 나쁘다.
+            """
+            _p = getattr(self, "_design_params", None)
+            if _p is None or not isinstance(tm_f, (int, float)) or not isinstance(tm_r, (int, float)):
+                return ""
+            v = _p.ta_recommended(tm_f, tm_r)
+            return round(v, 1) if v is not None else ""
+
+        def _tm_diff(tm_f, tm_r):
+            """fwd·rev Tm 차이(℃) — 올리고 행처럼 한쪽이 없으면 비운다."""
+            if not isinstance(tm_f, (int, float)) or not isinstance(tm_r, (int, float)):
+                return ""
+            return round(abs(tm_f - tm_r), 1)
 
         def _access(a):
             # accessibility dict → "severity(미페어확률)" 예: "ok(0.78)" / "strong(0.18)" / "na"
@@ -321,10 +367,14 @@ class WorkflowBase:
                     "right_oh": d.get("right_oh", ""),
                     "forward_primer": d.get("forward_primer", ""),
                     "reverse_primer": d.get("reverse_primer", ""),
+                    "fwd_mer": _mer(d.get("forward_primer")),
+                    "rev_mer": _mer(d.get("reverse_primer")),
                     "fwd_tm": _num(d.get("fwd_tm")),
                     "rev_tm": _num(d.get("rev_tm")),
                     "fwd_tm_full": _num(d.get("fwd_tm_full")),
                     "rev_tm_full": _num(d.get("rev_tm_full")),
+                    "ta": _ta(d.get("fwd_tm"), d.get("rev_tm")),
+                    "tm_diff": _tm_diff(d.get("fwd_tm"), d.get("rev_tm")),
                     "fwd_gc": _pct(d.get("fwd_gc")),
                     "rev_gc": _pct(d.get("rev_gc")),
                     "fwd_hairpin_dg": _num(d.get("fwd_hairpin_dg")),
@@ -340,11 +390,113 @@ class WorkflowBase:
                     "amplicon_len": len(d.get("full_sequence", "")),
                     "tier": d.get("tier", ""),
                     "passed": d.get("passed", ""),
+                    "violations": " | ".join(d.get("violations", []) or []),
                     "warnings": " | ".join(d.get("warnings", []) or []),
                 })
 
         self._write_design_conditions(design_results)
         return out
+
+    def write_cross_checks_csv(self, out, cross_dimers=None, crosstalk_pairs=None,
+                               scans=None, params=None):
+        """쌍 단위 교차 검사 결과를 `reports/cross_checks.csv`로 쓴다.
+
+        **왜 별 파일인가**: `primers.csv`는 행이 부품 하나다. 그런데 교차 검사는 전부
+        **쌍 단위**라 담을 자리가 없다 — "부품 A의 결합부 ↔ 부품 C의 결합부"는 A의
+        속성도 C의 속성도 아니다. 억지로 한쪽 행에 넣으면 다른 쪽을 보는 사람이 놓친다.
+        그래서 쌍을 1행으로 두는 파일을 따로 두고, `primers.csv`의 양쪽 행에는
+        **이 파일을 가리키는 포인터**를 남긴다.
+
+        Args:
+            out: 출력 경로
+            cross_dimers: `basic.primer_design.check_cross_dimers` 결과
+                (one-pot 프라이머 결합부끼리 — Golden Gate)
+            crosstalk_pairs: `JunctionPlan.crosstalk_pairs`
+                (비인접 fragment 공유 서열 — Gibson / yeast HR)
+            scans: `[(scope, kind, 검사한 쌍 수), ...]` — **무엇을 몇 쌍 봤는지**.
+                검사마다 요약 행을 한 줄 먼저 쓴다(아래 설명).
+            params: DesignParams — 요약 행에 적을 기준값(ΔG 경계 등). None이면 기본값.
+
+        Returns:
+            쓴 행 수. 0이면 파일을 만들지 않는다.
+
+        Note:
+            **요약 행을 왜 넣는가** (2026-11-06). 처음엔 걸린 쌍이 0이면 파일을 아예
+            안 만들었다. 그런데 Galaxy 출력은 파일이 있어야 해서 헤더만 있는 파일이
+            나갔고, 유저가 받아 보면 "검사했는데 깨끗한 것"인지 "검사가 안 돈 것"인지
+            구분할 수 없었다. 그래서 `scans`가 있으면 **걸린 쌍이 0이어도** 파일을
+            쓰고, 검사마다 `..._summary` 행으로 "N쌍 중 0쌍"을 적는다. 분모가 있어야
+            0이 결과로 읽힌다.
+        """
+        import csv as _csv
+        rows = []
+        for h in (cross_dimers or []):
+            rows.append({
+                # 어느 반응(튜브)의 쌍인가. 멀티모듈은 module마다 **다른 튜브**이고
+                #   `part_name`은 module 간에 겹치므로(실측: 2-module에서
+                #   `BBa_J23100_1_designed`가 두 번) scope 없이는 구분이 안 된다.
+                "scope": h.get("scope", ""),
+                "kind": "primer_dimer",
+                "a": h.get("a", ""), "b": h.get("b", ""),
+                "metric": "ΔG(kcal/mol)",
+                "value": round(h["delta_g"], 2) if isinstance(
+                    h.get("delta_g"), (int, float)) else "",
+                "verdict": "차단" if h.get("blocking") else "기록",
+                "detail": h.get("detail", ""),
+            })
+        for item in (crosstalk_pairs or []):
+            a, b, shared, orient = item[:4]
+            rows.append({
+                "scope": item[4] if len(item) > 4 else "",
+                "kind": "junction_crosstalk",
+                "a": a, "b": b,
+                "metric": f"공유 연속서열(bp, {orient})",
+                "value": shared,
+                # yeast는 `YeastHRCloning._check_plan`이 하드 차단으로 올리므로
+                # 여기까지 오면 Gibson 트랙이다(시험관이라 산물을 확인할 수 있다).
+                "verdict": "경고",
+                "detail": "비인접 fragment가 서열을 공유합니다 — 의도하지 않은 자리끼리 "
+                          "재조합할 수 있습니다. 같은 부품을 두 자리에 쓰고 있는지 "
+                          "확인하세요.",
+            })
+        # ── 요약 행 — 검사마다 한 줄, 걸린 쌍이 0이어도 쓴다 ──────────────────
+        from params import DEFAULT_PARAMS
+        from workflow.junction_plan import JUNCTION_UNIQUE_MAX_BP
+        _p = params or DEFAULT_PARAMS
+        _why = {
+            "primer_dimer": (
+                f"같은 튜브에 들어가는 프라이머의 **결합부끼리** 전수 비교했습니다 "
+                f"(기록 기준 ΔG ≤ {_p.qc_dimer_dg:g}, 차단 기준 ≤ "
+                f"{_p.qc_dg_absolute:g} kcal/mol). 5' tail은 모든 프라이머가 공유하므로 "
+                f"제외합니다."),
+            "junction_crosstalk": (
+                f"**인접하지 않은** fragment끼리 공유하는 최장 연속서열을 "
+                f"정방향·역상보 양쪽으로 비교했습니다 (임계 {JUNCTION_UNIQUE_MAX_BP}bp). "
+                f"인접 쌍은 공유가 설계 의도라 제외합니다."),
+        }
+        summary = []
+        for scope, kind, n_pairs in (scans or []):
+            n_hit = sum(1 for r in rows
+                        if r["scope"] == scope and r["kind"] == kind)
+            summary.append({
+                "scope": scope,
+                "kind": f"{kind}_summary",
+                "a": "(전수)", "b": "",
+                "metric": "검사한 쌍",
+                "value": n_pairs,
+                "verdict": "통과" if n_hit == 0 else f"{n_hit}쌍 확인 필요",
+                "detail": _why.get(kind, ""),
+            })
+        rows = summary + rows
+
+        if not rows:
+            return 0
+        fields = ["scope", "kind", "a", "b", "metric", "value", "verdict", "detail"]
+        with open(out, "w", newline="", encoding="utf-8") as f:
+            w = _csv.DictWriter(f, fieldnames=fields)
+            w.writeheader()
+            w.writerows(rows)
+        return len(rows)
 
     def _write_design_conditions(self, design_results: List[Dict[str, Any]]) -> Optional[Path]:
         """reports/design_conditions.md — 이 설계에 쓰인 조건을 명시한다.
@@ -361,20 +513,74 @@ class WorkflowBase:
         enzymes = sorted({d.get("restriction_enzyme", "") for d in design_results} - {""})
         prm = getattr(self, "_design_params", None)
 
+        # 2026-11-05(Y10) — Tm 축이 **NEB Tm Calculator 재현**으로 바뀌었다.
+        #   그 전엔 "Biopython Tm_NN + Na 50mM"이라고만 적어서, 유저가 NEB에서 본 값과
+        #   다를 때 "조건 차이일 수 있다"는 말밖에 못 했다. 지금은 같은 값이 나오므로
+        #   **무엇을 재현했고 오차가 얼마인지**를 숫자로 적는다 — 그게 신뢰의 근거다.
+        _poly = prm.polymerase_key() if prm is not None else None
+        _mono = (prm.na_mM + prm.k_mM + prm.tris_mM / 2.0) if prm is not None else None
+        #: NEB 공개값과의 실측 오차 — `tools_dev/params_cp_tests/y10_test.py`가 재검증한다.
+        _NEB_RMSE = {"taq": "0.29", "phusion": "0.62", "q5": "0.35"}
+
         lines = [
             "# 이 설계에 쓰인 조건",
             "",
-            "## Tm 계산",
+            "## Tm 계산 — NEB Tm Calculator 재현",
             "",
             "| 항목 | 값 |",
             "|---|---|",
-            "| 방식 | Nearest-Neighbor (SantaLucia 1998, Biopython `Tm_NN`) |",
-            f"| Na⁺ 농도 | {na} mM |" if na is not None else "| Na⁺ 농도 | (미기록) |",
-            f"| 프라이머 농도 | {conc} nM |" if conc is not None else "| 프라이머 농도 | (미기록) |",
+            "| 방식 | Nearest-Neighbor (SantaLucia 1998 / Biopython `Tm_NN`, `DNA_NN3`) |",
+        ]
+        if prm is not None:
+            lines += [
+                f"| 재현 대상 | {_poly or '(사용자 조성 — NEB 프리셋과 다릅니다)'} |",
+                f"| 1가 염 (환산) | {_mono:g} mM = Na⁺ {prm.na_mM:g} + K⁺ {prm.k_mM:g}"
+                f" + Tris {prm.tris_mM:g}/2 |",
+                f"| Mg²⁺ / dNTP | {prm.mg_mM:g} mM / {prm.dntp_mM:g} mM |",
+                f"| 프라이머 농도 | {prm.primer_conc_nM:g} nM |",
+                f"| 염 보정 | saltcorr={prm.tm_saltcorr}"
+                f" ({'Schildkraut — NEB가 Phusion에만 쓰는 보정' if prm.tm_saltcorr == 1 else 'Owczarzy 2008'}) |",
+            ]
+            if _poly in _NEB_RMSE:
+                lines.append(f"| NEB 공개값과의 오차 | RMSE {_NEB_RMSE[_poly]}℃"
+                             f" (18~36nt 프라이머로 검증) |")
+        else:
+            lines += [
+                f"| Na⁺ 농도 | {na} mM |" if na is not None else "| Na⁺ 농도 | (미기록) |",
+                f"| 프라이머 농도 | {conc} nM |" if conc is not None
+                else "| 프라이머 농도 | (미기록) |",
+            ]
+        lines += [
             "",
-            "> 계산 도구가 다르면 같은 서열도 Tm이 몇 도씩 다르게 나옵니다.",
-            "> NEB/SnapGene 등에서 보신 값과 차이가 있다면 위 조건 차이일 가능성이 큽니다.",
+            "> 이 조건은 **NEB Tm Calculator와 같은 값**이 나오도록 맞춰져 있습니다.",
+            "> NEB 버퍼의 1가 염은 Na⁺가 아니라 K⁺/Tris이므로 Na⁺는 0입니다"
+            " — 염이 없는 것이 아니라 위 표의 환산값이 실제 기준입니다.",
             "",
+        ]
+
+        # 권장 Ta — NEB 축으로 간 **목적**이다. Tm만 맞춰도 "몇 도로 돌리냐"가 없으면
+        #   유저가 손으로 환산해야 하고, 그러면 축을 맞춘 의미가 절반 사라진다.
+        if prm is not None and _poly is not None:
+            # 지연 import — `params`는 `basic/`을 쓰고 `workflow/`는 양쪽을 쓰므로
+            #   모듈 최상단에서 끌면 import 순환이 생긴다(기존 관례와 동일).
+            from params import NEB_TA_RULES
+            _kind, _off, _cap = NEB_TA_RULES[_poly]
+            _rule = ("0.93 × min(Tm) + 7.5" if _kind == "phusion"
+                     else f"min(Tm) {'+' if _off >= 0 else '−'} {abs(_off):g}")
+            lines += [
+                "## 권장 annealing 온도 (`primers.csv`의 `ta` 컬럼)",
+                "",
+                "| 효소 | 규칙 | 상한 |",
+                "|---|---|---|",
+                f"| {_poly} | {_rule} | {_cap:g}℃ |",
+                "",
+                "> `min(Tm)`은 fwd·rev의 **결합부(anneal) Tm 중 낮은 쪽**입니다"
+                " — 먼저 떨어지는 쪽이 PCR을 결정합니다.",
+                "> NEB의 공개 Ta 규칙을 그대로 옮긴 값이라 NEB 사이트에서 확인하셔도 같습니다.",
+                "",
+            ]
+
+        lines += [
             "## primers.csv의 Tm 두 종류",
             "",
             "조립용 프라이머는 `[5' 꼬리][주형 결합부]` 구조라 두 값이 크게 다릅니다.",
@@ -386,26 +592,40 @@ class WorkflowBase:
             "",
         ]
 
-        # GC 등급은 **2층**이다(차단/경고). 설명이 없으면 yellow가 뜬 이유를 알 수 없다 —
-        # "등급을 숨기지 않는다"의 나머지 절반이다. 표의 숫자는 실제 적용값에서 읽는다.
+        # 2026-11-05(Y11) — 판정 기준이 **전부 유저 선언창 하나**로 바뀌었다.
+        # 그러면 "경고가 왜 떴나"의 답이 항상 "내가 설정한 범위를 벗어났다"이므로,
+        # 설명할 것은 등급 2층의 뜻이 아니라 **어떤 범위가 쓰였는가**다.
         if prm is not None:
             lines += [
-                "## primers.csv의 GC 등급",
+                "## 경고 기준 — 설정하신 범위 하나입니다",
                 "",
-                "`fwd_gc` / `rev_gc`도 **결합부(anneal) 기준**입니다. 등급은 2층입니다.",
+                "프라이머 경고는 **아래 범위를 벗어났을 때만** 붙습니다. 예전에는 설정값"
+                " 바깥에 내부 판정 기준이 따로 있어서(Tm 45~85℃ · GC 이상구간 40~60%"
+                " · 결합부 길이 15~30nt 고정) 설정하지 않은 기준으로도 경고가 떴습니다.",
                 "",
-                "| 결합부 GC% | 등급 | 뜻 |",
+                "| 축 | 설정값 | 비교 대상 |",
                 "|---|---|---|",
-                f"| {prm.qc_gc_min:g} ~ {prm.qc_gc_ideal_min:g} 또는 "
-                f"{prm.qc_gc_ideal_max:g} ~ {prm.qc_gc_max:g} | 🟡 주의 | "
-                f"관례적 이상 구간 밖입니다. **AT-rich/GC-rich 주형이면 정상**일 수 있습니다 |",
-                f"| {prm.qc_gc_ideal_min:g} ~ {prm.qc_gc_ideal_max:g} | 🟢 양호 | 이상 구간 |",
-                f"| {prm.qc_gc_min:g} 미만 또는 {prm.qc_gc_max:g} 초과 | 🔴 차단 | "
-                f"설계 목표 범위 밖입니다 |",
+                f"| Tm | {prm.tm_min:g} ~ {prm.tm_max:g} ℃ | 결합부(anneal) Tm |",
+                f"| 결합부 길이 | {prm.primer_len_min} ~ {prm.primer_len_max} nt | "
+                f"결합부 길이(꼬리 제외) |",
+                f"| GC | {prm.gc_min:g} ~ {prm.gc_max:g} % | 결합부 GC% |",
+                f"| fwd·rev Tm 차이 | {prm.pair_tm_diff_max:g} ℃ 이하 | "
+                f"`tm_diff` 컬럼 |",
                 "",
                 "> 결합부 GC%는 **주형의 성질**이라 프라이머를 늘려도 거의 바뀌지 않습니다"
-                " (늘리면 Tm은 올라갑니다). 그래서 이상 구간을 벗어난 것 자체는 차단하지 않고,",
-                "> Tm이 위 조건에서 충분한지를 함께 보고 판단하시면 됩니다.",
+                " (늘리면 Tm은 올라갑니다). GC 경고가 뜨면 프라이머를 고치는 것보다"
+                " Tm이 충분한지를 함께 보고 판단하시는 편이 맞습니다.",
+                "",
+                "> 위 범위와 무관하게 **항상** 알리는 것이 두 가지 있습니다 —"
+                " hairpin과 dimer입니다. 범위 문제가 아니라 ΔG 하나로 PCR이 걸리지 않는"
+                " 신호라, 설정값 안에 있어도 그대로 알립니다.",
+                "",
+                "## primers.csv의 `tm_diff`와 `ta`는 같이 보셔야 합니다",
+                "",
+                f"권장 annealing 온도(`ta`)는 **낮은 쪽 Tm 기준**으로 정해집니다."
+                f" 그래서 `tm_diff`가 크면 그 Ta에서 **뜨거운 쪽 프라이머가 자기 Tm보다"
+                f" 훨씬 낮은 온도에서** 돌아 비특이 결합이 늘어납니다."
+                f" 설정하신 상한은 {prm.pair_tm_diff_max:g}℃입니다.",
                 "",
             ]
 

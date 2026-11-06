@@ -211,6 +211,14 @@ class GoldenGateModule(AssemblyBase):
         _ep = get_typeIIS_params(self.enzyme_name)
         self.overhang_len = int(_ep["overhang_len"])   # 효소 파생 (BsaI 4 / SapI 3)
         self.spacer_len = int(_ep["spacer_len"])       # 효소 파생 (BsaI 1 / BbsI 2)
+        # one-pot 교차 dimer 결과(2026-11-05 Y12). `prepare_fragments`가 채우고
+        #   리포트(`reports/cross_checks.csv`)가 읽는다. 쌍 단위 결과라 부품 행에
+        #   담을 자리가 없어서 **설계기가 들고 있다가 넘기는** 방식을 쓴다
+        #   (`last_primer_design`과 같은 패턴 — Y10-b).
+        self.last_cross_dimers = []
+        #: 교차 dimer로 **비교한 쌍 수**. 걸린 쌍이 0일 때 "검사했고 깨끗하다"를
+        #  말하려면 분모가 필요하다(`_DimerScan.pairs_checked`).
+        self.last_cross_dimer_pairs = 0
 
     # TODO: 현재 기능상으로는 항상 랜덤으로 overhang을 설계해서 나옴.
     # 관계자분 피드백으로는 물리적으로 파츠가 존재할때 overhang 재활용 관점이 굉장히 중요하다고하심.
@@ -469,6 +477,9 @@ class GoldenGateModule(AssemblyBase):
                 'right_oh_id': oh_id_map.get(right_oh.upper(), "") if right_oh else "",
                 'fwd_tm': design['fwd_tm'],
                 'rev_tm': design['rev_tm'],
+                # 2026-11-05(Y12) — 주형 결합부(tail 제외). 교차 dimer 검사가 쓴다.
+                'fwd_anneal': design.get('fwd_anneal'),
+                'rev_anneal': design.get('rev_anneal'),
                 # 조립용 프라이머는 [5' tail][anneal] 구조라 두 Tm이 크게 다르다.
                 # 위 *_tm은 anneal 기준, 아래 *_tm_full은 주문할 프라이머 전체 기준.
                 'fwd_tm_full': design.get('fwd_tm_full'),
@@ -489,7 +500,71 @@ class GoldenGateModule(AssemblyBase):
                 'structural_notes': design.get('structural_notes', [])
             })
 
+        # ── one-pot 교차 dimer (2026-11-05 Y12) ────────────────────────────
+        # 여기가 올바른 자리인 이유: `prepare_fragments` 한 번이 곧 **한 튜브**다.
+        #   부품 n개의 프라이머 2n개가 같이 들어가므로 전수 쌍의 범위가 정확히 이것이다.
+        #   (부품 하나씩 설계하는 `design_goldengate_primers`는 자기 쌍밖에 모른다)
+        self.last_cross_dimers = self._check_cross_dimers(design_results)
         return design_results
+
+    def _check_cross_dimers(self, design_results: List[Dict]) -> List[Dict]:
+        """같은 튜브에 들어가는 프라이머들의 **결합부끼리** dimer를 전수 검사한다.
+
+        걸린 쌍은 ① 연루된 **양쪽 행**의 violations에 넣고(시트만 보고 주문하는 사람이
+        놓치면 안 된다) ② 전체 목록을 돌려준다(`reports/cross_checks.csv`로 나간다).
+
+        왜 결합부만 보는지, 왜 경고가 아니라 차단인지는
+        `basic.primer_design.check_cross_dimers` 독스트링에 있다.
+
+        Args:
+            design_results: `prepare_fragments`가 만든 설계 결과 리스트(제자리 수정됨)
+
+        Returns:
+            `check_cross_dimers`의 결과 리스트
+        """
+        from basic.primer_design import check_cross_dimers
+
+        anneals = []
+        for d in design_results:
+            for side in ("fwd", "rev"):
+                seq = d.get(f"{side}_anneal")
+                if seq:
+                    anneals.append((f"{d['part_name']} {side}", seq))
+        hits = check_cross_dimers(anneals, self.params)
+        self.last_cross_dimer_pairs = getattr(hits, "pairs_checked", 0)
+        if not hits:
+            return []
+
+        # 라벨("<part_name> fwd") → 그 부품의 행
+        #   ⚠️ **차단 등급(blocking)만 행에 적는다.** 중간 등급까지 적으면 기본값에서
+        #     과반이 red가 된다(실측 39행 중 24행 = 62%). 중간 등급은
+        #     `reports/cross_checks.csv`에 남아 필요한 사람이 볼 수 있다.
+        by_name = {d["part_name"]: d for d in design_results}
+        blocking = [h for h in hits if h.get("blocking")]
+        for h in blocking:
+            for lab, other in ((h["a"], h["b"]), (h["b"], h["a"])):
+                row = by_name.get(lab.rsplit(" ", 1)[0])
+                if row is None:
+                    continue
+                row.setdefault("violations", []).append(
+                    f"교차 dimer: {lab.rsplit(' ', 1)[1]} 결합부가 {other}와 강하게 "
+                    f"붙습니다 (ΔG {h['delta_g']:.2f} kcal/mol, 차단 기준 "
+                    f"{self.params.qc_dg_absolute:g}) — 같은 튜브에 들어가므로 "
+                    f"프라이머가 서로 붙어 주형으로 못 갑니다. 자세한 쌍 목록은 "
+                    f"reports/cross_checks.csv를 보세요."
+                )
+                row["passed"] = False
+                row["tier"] = "red"
+        if blocking:
+            print(f"\n  🔴 one-pot 교차 dimer {len(blocking)}쌍 차단 "
+                  f"(기록 {len(hits)}쌍) — reports/cross_checks.csv")
+        elif hits:
+            print(f"\n  🟡 one-pot 교차 dimer {len(hits)}쌍 기록 "
+                  f"(차단 등급 없음) — reports/cross_checks.csv")
+        for h in hits[:4]:
+            print(f"     {'차단' if h.get('blocking') else '기록'} "
+                  f"{h['a']} ↔ {h['b']}: ΔG {h['delta_g']:.2f}")
+        return hits
 
     # TODO: 이 코드가 내가 알기로는 제한효소를 자른뒤에 실제 삽입시켜야하는 서열을 찾는거로 알고 있는데
     # 당연히 overhang 사이에 있는걸 고르도록 해야하지않나? 이게 왜 필요하지?
