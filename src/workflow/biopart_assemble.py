@@ -447,6 +447,9 @@ class BiopartWorkflow(WorkflowBase):
         if want == "digest" and enzyme is None:
             # 실측상 10% 정도는 쓸 효소가 없다 → 조립을 죽이지 않고 pcr로 내린다.
             print(f"     No digest enzyme found - switching to the PCR method ({why})")
+            from . import design_events as _ev
+            _ev.record("assembly", _ev.KIND_DETOUR, getattr(module, "name", "module"),
+                       "module excision: digest -> PCR", why)
             want = "pcr"
 
         if want == "digest":

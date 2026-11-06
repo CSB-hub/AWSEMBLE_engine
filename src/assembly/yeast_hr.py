@@ -27,18 +27,21 @@
 | 반응 장소 | 시험관 | **효모 세포 안(in vivo)** | `validate()` 문구 |
 | homology 길이 | 15~25bp 고정 | **40~60bp 범위** (품질 통과하는 최소를 접합부마다) | `ARM_PARAMS` |
 | 조립 확인 시점 | 조립 직후 | **형질전환·회수 후** | `validate()` 문구 |
-| 접합부 교차 | 경고 | **차단** | `_check_plan()` |
+| arm 교차 비교 범위 | arm끼리만 | **arm ↔ 다른 몸통·백본까지** | `CROSSTALK_SCOPE` |
 | 벡터 요건 | 제약 없음 | **효모 복제원점 + 선택마커** | `check_yeast_vector()` |
 
-### 접합부 교차를 왜 차단까지 하나
+### arm 교차를 왜 몸통까지 보나
 
-Gibson은 시험관 산물을 전기영동·시퀀싱으로 확인한 뒤 다음 단계로 간다. 엉뚱한 조립이
-섞여도 **그 자리에서 보인다**. yeast HR은 형질전환 자체가 조립 단계라서, 잘못된 재조합은
-콜로니를 키우고 플라스미드를 회수한 **뒤에야** 드러난다. 확인 시점이 뒤에 있으므로
-설계 단계에서 막는 쪽이 맞다.
+Gibson은 exonuclease가 fragment **말단만** 깎아 단일가닥을 노출시킨다. 그래서 arm이
+다른 fragment의 몸통 한복판에 어닐링할 방법이 없고, 비교는 arm끼리로 충분하다.
 
-실측 근거: 같은 부품을 두 자리에 쓰면 비인접 fragment가 **81bp를 공유**한다
-(`develop_log/ljw/261024_gibson_part_module_and_yeast_plan.md` §1-2).
+효모 안에서는 그 제약이 없다 — 상동 구간이면 어디서든 재조합한다. arm이 다른
+fragment의 몸통이나 백본의 반복 구간에 내려앉으면 재배열된 산물이 나오는데, 그게
+형질전환·플라스미드 회수 **뒤에야** 드러난다. 그래서 비교 범위를 몸통·백본까지
+넓힌다(`CROSSTALK_SCOPE = "arm+body"`).
+
+걸렸을 때의 처리는 Gibson과 같다 — `JunctionPlanner._resolve_arm_crosstalk`가 접합부
+길이를 다시 고르고(유저 범위 → 하드 범위), 끝까지 안 되면 설계불가로 끊는다.
 
 ### 산물은 "기대 산물"이다
 
@@ -161,6 +164,9 @@ def check_yeast_vector(vector: Dseqrecord) -> Dict:
     }
 
 
+from params import _YEAST_HOMOLOGY_RANGE
+
+
 class YeastHRCloning(GibsonCloning):
     """Yeast HR 클로닝 — 세포 안에서 상동성으로 잇는다.
 
@@ -187,37 +193,15 @@ class YeastHRCloning(GibsonCloning):
         "**expected product**, and in practice you must recover the plasmid from yeast and verify it."
     )
 
-    def _check_plan(self, plan) -> None:
-        """접합부 교차를 **차단**한다 (Gibson은 경고까지만).
+    #: yeast HR arm의 하드 한계. 문헌이 보고한 범위이자 `params.validate()`가 거는
+    #: 하드 리밋과 같은 값이다 — arm이 엉뚱한 자리에 붙어 유저 범위 안에서 못 피할 때
+    #: 여기까지만 넘어간다(`_resolve_arm_crosstalk`가 note로 남긴다).
+    ARM_HARD_RANGE = _YEAST_HOMOLOGY_RANGE
 
-        in vivo라서 잘못된 재조합이 콜로니를 키우고 플라스미드를 회수한 **뒤에야**
-        드러난다. 확인 시점이 뒤에 있으므로 설계 단계에서 막는다.
-
-        Args:
-            plan: `workflow.junction_plan.JunctionPlan`
-
-        Raises:
-            RuntimeError: 비인접 fragment가 임계 이상으로 서열을 공유할 때.
-        """
-        if not plan.crosstalk_pairs:
-            return
-        from workflow.junction_plan import JUNCTION_UNIQUE_MAX_BP
-
-        detail = "\n".join(
-            f"    - {a} <-> {b}: {n}bp shared ({orient})"
-            for a, b, n, orient in plan.crosstalk_pairs[:6]
-        )
-        raise RuntimeError(
-            f"yeast HR design stopped - non-adjacent fragments share sequence "
-            f"(threshold {JUNCTION_UNIQUE_MAX_BP}bp, max {plan.max_crosstalk}bp):\n{detail}\n"
-            f"  Inside the yeast cell these positions can recombine with **each other** as "
-            f"well as at the intended junctions, and since the transformation is the assembly, "
-            f"a wrong product only shows up after the experiment.\n"
-            f"  -> If the same part is used in two places, **replace one with a different "
-            f"part.** Inserting neutral sequence at the junction is not an option - at "
-            f"positions like an RBS/CDS boundary the spacing sets the function, so the "
-            f"assembly would succeed while expression dies."
-        )
+    #: in vivo라 **상동 구간이면 어디든** 재조합한다 → arm을 다른 arm뿐 아니라 다른
+    #: fragment의 몸통·백본과도 비교한다. in vitro Gibson은 말단만 깎여서 몸통에는
+    #: 붙을 수가 없으므로 `"arm"`만 본다.
+    CROSSTALK_SCOPE = "arm+body"
 
     def assemble(self, fragments: List[Dseqrecord],
                  assembly_type: str = "circular") -> List[Dseqrecord]:

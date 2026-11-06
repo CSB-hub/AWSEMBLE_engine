@@ -229,10 +229,18 @@ class JunctionPlan:
         module_seq: 조립이 성공했을 때 기대되는 module 서열(= 서열 오라클)
         arm_min / arm_max: 사용한 접합부 길이 범위
         warnings: 차단은 아니지만 알려야 하는 사항
-        max_crosstalk: 비인접 fragment 쌍의 최대 공통서열 길이(bp)
-        crosstalk_checked: 교차를 비교한 비인접 쌍의 수 — 0건의 분모다
+        max_crosstalk: 비인접 fragment **몸통** 쌍의 최대 공통서열 길이(bp)
+        crosstalk_checked: 몸통 교차를 비교한 비인접 쌍의 수 — 0건의 분모다
         crosstalk_pairs: 임계를 넘은 (왼쪽 이름, 오른쪽 이름, 길이, 방향) 목록.
-            방향은 `"정방향"` 또는 `"역상보"` — 어느 쪽에서 걸렸는지 알려준다.
+            방향은 `"forward"` 또는 `"reverse-complement"`.
+            ⚠️ **차단하지 않는다**(2026-11-06). 몸통끼리의 공유는 arm이 끼지 않으면
+            Gibson에서는 어닐링할 수가 없고(exonuclease가 말단만 깎는다), yeast에서도
+            arm 기준 판정이 따로 돌기 때문이다. 중복 부품 경고가 소리 없이 사라지지
+            않도록 **기록만** 남긴다.
+        arm_checked: arm 기준으로 비교한 쌍의 수 — 0건의 분모다
+        arm_hits: arm이 엉뚱한 자리에 붙을 뻔한 건과 그 처리 결과
+            (`{a, b, bp, orient, verdict, detail}`). `verdict`는
+            `redesigned` / `redesigned (outside the declared range)` / `BLOCKED`.
     """
 
     fragments: List[FragmentSpec]
@@ -244,6 +252,8 @@ class JunctionPlan:
     max_crosstalk: int = 0
     crosstalk_checked: int = 0
     crosstalk_pairs: List[Tuple[str, str, int, str]] = field(default_factory=list)
+    arm_checked: int = 0
+    arm_hits: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def arm(self) -> int:
@@ -294,6 +304,10 @@ class JunctionPlanner:
         parts: Sequence[Dseqrecord],
         arm_min: Optional[int] = None,
         arm_max: Optional[int] = None,
+        *,
+        hard_range: Optional[Tuple[int, int]] = None,
+        crosstalk_scope: str = "arm",
+        extra_seqs: Optional[Sequence[Tuple[str, str]]] = None,
     ) -> JunctionPlan:
         """부품 리스트 → fragment 명세.
 
@@ -302,6 +316,14 @@ class JunctionPlanner:
                 **호출자가 미리 붙여서** 넘긴다.
             arm_min / arm_max: 접합부 길이 범위(bp). None이면 `params.gibson_overlap`
                 하나로 고정한다. 같은 값이면 탐색 없이 그 길이를 쓴다.
+            hard_range: arm이 엉뚱한 자리에 붙어 **유저 범위 안에서는 못 피할 때**
+                마지막으로 넘어갈 수 있는 길이 범위. None이면 범위 밖 재설계를 하지
+                않는다(= 유저 범위에서 실패하면 바로 설계불가).
+            crosstalk_scope: `"arm"`(arm끼리만) 또는 `"arm+body"`(arm ↔ 다른
+                fragment 몸통까지). in vitro/in vivo 차이다 — `GibsonCloning`/
+                `YeastHRCloning`가 각자 선언한다.
+            extra_seqs: arm이 붙으면 안 되는 **추가 서열**. `(이름, 서열)` 목록으로,
+                yeast 트랙이 백본을 넘긴다.
 
         Returns:
             `JunctionPlan`
@@ -309,7 +331,8 @@ class JunctionPlanner:
         Raises:
             ValueError: 부품이 2개 미만이거나 빈 서열이 있을 때, 범위가 뒤집혔을 때.
             RuntimeError: 어떤 접합부도 범위 안에서 품질을 통과하지 못했을 때,
-                또는 짧은 부품을 tail·올리고 어느 쪽으로도 실을 수 없을 때.
+                짧은 부품을 tail·올리고 어느 쪽으로도 실을 수 없을 때,
+                또는 arm이 엉뚱한 자리에 붙는 것을 끝까지 못 피했을 때.
         """
         from basic.sequence_analysis import validate_dna_sequence
 
@@ -347,7 +370,10 @@ class JunctionPlanner:
             arm_max=amax,
             warnings=warnings,
         )
-        self._check_crosstalk(plan)
+        # 순서가 중요하다 — arm 재설계가 arm 서열을 바꾸므로 **먼저** 돌리고,
+        # 몸통 기록은 그 결과와 무관하므로(몸통은 안 바뀐다) 뒤에 둔다.
+        self._resolve_arm_crosstalk(plan, hard_range, crosstalk_scope, extra_seqs)
+        self._check_body_crosstalk(plan)
         return plan
 
     # ------------------------------------------------------------------ #
@@ -622,7 +648,8 @@ class JunctionPlanner:
 
         차단은 GC 하나뿐이다(`gc_min`/`gc_max` — 설계 목표 축). 2차구조는 창이 길수록
         ΔG가 자동으로 내려가므로 차단에 쓰지 않고 값만 돌려준다(호출자가 경고로 쓴다).
-        유일성은 fragment가 다 만들어진 뒤에 전체를 보고 판정한다(`_check_crosstalk`).
+        유일성은 fragment가 다 만들어진 뒤에 전체를 보고 판정한다
+        (`_resolve_arm_crosstalk` — 걸리면 그쪽이 길이를 다시 고른다).
 
         Returns:
             (통과 여부, 사유, GC%, 2차구조 ΔG)
@@ -680,52 +707,226 @@ class JunctionPlanner:
                         f"(tail {len(tail)}nt)."
                     )
 
+    # ------------------------------------------------------------------ #
+    # arm 기준 교차 판정 + 재설계 래더
+    # ------------------------------------------------------------------ #
+
+    def _arm_source_index(self, plan: JunctionPlan, i: int) -> int:
+        """접합부 i의 구간을 **떼어 온** fragment의 인덱스.
+
+        그 fragment의 몸통에는 구간이 100% 들어 있다 — 설계 의도이므로 비교에서 뺀다.
+        """
+        return i + 1 if plan.junctions[i].carrier == "left" else i
+
     @staticmethod
-    def _check_crosstalk(plan: JunctionPlan) -> None:
-        """비인접 fragment가 서열을 얼마나 공유하는지 측정해 plan에 기록한다.
+    def _shared_run(a: str, b: str) -> Tuple[int, str]:
+        """두 서열의 최장 공통 연속구간 길이와 걸린 방향.
 
-        인접 쌍은 **공유하는 것이 설계 의도**이므로 제외한다. 비인접 쌍이 길게 공유하면
-        의도하지 않은 자리끼리 재조합할 수 있다(실측: 같은 부품을 두 자리에 쓰면 81bp 공유).
-
-        Gibson 트랙은 경고까지만 한다 — 시험관 반응이라 조립 산물을 확인할 수 있다.
-        yeast 트랙은 `YeastHRCloning._check_plan`이 이걸 하드 차단으로 올린다.
-
-        ⚠️ **정방향과 역상보를 둘 다 본다** (2026-11-05 Y12). 2026-11-05까지는 정방향만
-        봐서 교차의 **절반을 놓쳤다** — `longest_common_substring_len`이 독스트링에
-        "역상보는 보지 않는다 — 역상보 교차까지 봐야 하면 호출자가 한쪽을
-        `reverse_complement()`해서 한 번 더 부른다"고 적어뒀는데 그 두 번째 호출이
-        없었다. homology 조립은 **이중가닥끼리 상동성을 찾는** 반응이라 한쪽 fragment가
-        뒤집혀 들어가도 재조합이 성립한다(그래서 pydna도 원형 산물을 역상보 회전으로
-        2개 돌려준다 — `YeastHRCloning.assemble` 참고). 방향을 하나만 보는 건
-        **반쪽 검사**였다.
+        ⚠️ **정방향과 역상보를 둘 다 본다** (2026-11-05 Y12). 정방향만 보면 교차의
+        **절반을 놓친다** — homology 조립은 이중가닥끼리 상동성을 찾는 반응이라
+        한쪽이 뒤집혀 들어가도 재조합이 성립한다(pydna가 원형 산물을 역상보 회전으로
+        2개 돌려주는 이유 — `YeastHRCloning.assemble` 참고).
         """
         from basic.sequence_analysis import longest_common_substring_len
         from Bio.Seq import Seq as _Seq
 
+        if not a or not b:
+            return 0, "forward"
+        fwd = longest_common_substring_len(a, b)
+        rev = longest_common_substring_len(a, str(_Seq(b).reverse_complement()))
+        return (max(fwd, rev), "reverse-complement" if rev > fwd else "forward")
+
+    def _arm_targets(self, plan: JunctionPlan, i: int, scope: str,
+                     extra_seqs) -> List[Tuple[str, str]]:
+        """접합부 i의 arm이 **붙으면 안 되는** 서열 목록 — `(이름, 서열)`.
+
+        - 다른 접합부의 arm: 거기 붙으면 fragment가 엉뚱한 짝과 이어진다.
+        - (`arm+body`) 다른 fragment의 몸통·백본: 세포 안에서는 상동 구간이면 어디든
+          재조합하므로 arm이 몸통 한복판에 내려앉을 수 있다. in vitro Gibson은
+          exonuclease가 **말단만** 깎아서 몸통에는 붙을 수가 없으므로 보지 않는다.
+
+        같은 fragment의 반대쪽 arm도 비교 대상이다 — 몸통이 짧아 양쪽 창이 겹치면
+        그 fragment가 뒤집힌 짝으로 이어질 수 있다(길이를 줄이면 풀린다).
+        """
+        out: List[Tuple[str, str]] = []
+        for j, jn in enumerate(plan.junctions):
+            if j != i:
+                out.append((f"junction {j} arm ({jn.left_name}<->{jn.right_name})", jn.window))
+        if scope == "arm+body":
+            src = self._arm_source_index(plan, i)
+            for k, f in enumerate(plan.fragments):
+                if k != src:
+                    out.append((f"{f.name} body", f.body))
+            for nm, sq in (extra_seqs or []):
+                out.append((nm, sq))
+        return out
+
+    def _worst_arm_hit(self, window: str, targets) -> Tuple[int, str, str]:
+        """창 하나를 대상 전부와 비교해 가장 나쁜 (bp, 대상 이름, 방향)."""
+        worst, who, orient = 0, "", "forward"
+        for nm, sq in targets:
+            n, o = self._shared_run(window, sq)
+            if n > worst:
+                worst, who, orient = n, nm, o
+        return worst, who, orient
+
+    def _resolve_arm_crosstalk(self, plan: JunctionPlan,
+                               hard_range: Optional[Tuple[int, int]],
+                               scope: str, extra_seqs) -> None:
+        """arm이 엉뚱한 자리에 붙는지 보고, 걸리면 **접합부 단위로 다시 설계한다**.
+
+        래더(요청 2026-11-06):
+          ① 유저가 선언한 범위 안에서 다른 길이로 다시 고른다.
+          ② 안 되면 `hard_range` 안에서 범위 **밖** 길이까지 간다 — 산출물에
+             "왜 범위를 벗어났는지" note로 남긴다.
+          ③ 그래도 안 되면 **설계불가**. 어느 arm이 어디에 몇 bp로 붙는지 적는다.
+
+        접합부 하나 때문에 전체 arm을 밀지 않는다 — 걸린 접합부만 바꾼다.
+        그리고 한 접합부를 바꾸면 다른 접합부의 비교 대상도 바뀌므로, 바꾼 결과를
+        반영하며 **순차로** 푼다(그리디). 임계는 `JUNCTION_UNIQUE_MAX_BP`.
+        """
+        from workflow import design_events as events
+
+        juncs = plan.junctions
+        if not juncs:
+            return
+
+        amin, amax = plan.arm_min, plan.arm_max
+        hlo, hhi = hard_range if hard_range else (amin, amax)
+        hlo, hhi = min(hlo, amin), max(hhi, amax)
+
+        # 분모: 각 arm × 비교 대상 수. "0건"이 결과로 읽히려면 몇을 봤는지가 필요하다.
+        plan.arm_checked = sum(
+            len(self._arm_targets(plan, i, scope, extra_seqs)) for i in range(len(juncs)))
+
+        for i, jn in enumerate(juncs):
+            targets = self._arm_targets(plan, i, scope, extra_seqs)
+            worst, who, orient = self._worst_arm_hit(jn.window, targets)
+            if worst < JUNCTION_UNIQUE_MAX_BP:
+                continue
+
+            left, right = plan.fragments[i], plan.fragments[i + 1]
+            source = right.body if jn.carrier == "left" else left.body
+            label = f"junction {i} ({jn.left_name}<->{jn.right_name})"
+
+            # ① 유저 범위 → ② 범위 밖(hard). 각 구간 안에서는 짧은 쪽부터 — 짧은 창이
+            #    공유 구간을 벗어날 가능성이 높고 주문 길이에도 유리하다.
+            in_range = [L for L in range(amin, amax + 1) if L != jn.length]
+            out_range = [L for L in range(hlo, hhi + 1) if not (amin <= L <= amax)]
+            picked = None
+            for tier, lengths in (("in", in_range), ("out", out_range)):
+                for L in lengths:
+                    if len(source) < L:
+                        continue
+                    cand = source[:L] if jn.carrier == "left" else source[-L:]
+                    ok, _reason, gc, dg = self._eval_window(cand)
+                    if not ok:
+                        continue
+                    n, _w, _o = self._worst_arm_hit(cand, targets)
+                    if n < JUNCTION_UNIQUE_MAX_BP:
+                        picked = (tier, L, cand, gc, dg)
+                        break
+                if picked:
+                    break
+
+            if picked is None:
+                plan.arm_hits.append({
+                    "a": label, "b": who, "bp": worst, "orient": orient,
+                    "verdict": "BLOCKED",
+                    "detail": (f"No junction length in {hlo}-{hhi}bp kept this arm from "
+                               f"binding {who}."),
+                })
+                events.record("junction", events.KIND_BLOCKED, label,
+                              f"arm binds {who} ({worst}bp, {orient})",
+                              f"no length in {hlo}-{hhi}bp avoided it")
+                raise RuntimeError(
+                    f"Design not possible - at {label} the homology arm also matches "
+                    f"{who} over {worst}bp ({orient}, threshold {JUNCTION_UNIQUE_MAX_BP}bp), "
+                    f"and no junction length between {hlo} and {hhi}bp avoided it.\n"
+                    f"  The arm would anneal at that wrong position as readily as at the "
+                    f"intended junction, so the assembly can give a rearranged product.\n"
+                    f"  -> Replace the part at this position with a different one, or reorder "
+                    f"the modules so the two matching positions are not in the same reaction."
+                )
+
+            tier, L, window, gc, dg = picked
+            # 창을 바꿨으니 arm을 다시 붙인다 — 이전 창은 지운다(carrier는 그대로).
+            if jn.carrier == "left":
+                left.right_arm = window
+            else:
+                right.left_arm = window
+            # ⚠️ 바꾸기 **전에** 원래 길이를 잡아 둔다 — 아래 경고 문구가 "원래
+            #   몇 bp였는데 몇 bp로 바꿨다"를 말해야 하는데, 먼저 덮어쓰면 양쪽이
+            #   같은 숫자로 찍힌다.
+            old_len = jn.length
+            jn.tried.append(f"{old_len}bp: the arm matched {who} over {worst}bp ({orient})")
+            jn.window, jn.length, jn.gc, jn.hairpin_dg = window, L, gc, dg
+
+            if tier == "in":
+                verdict = "redesigned"
+                why = f"redesigned to {L}bp within the declared range {amin}-{amax}bp"
+                plan.warnings.append(
+                    f"{label}: the {old_len}bp arm also matched {who} over {worst}bp "
+                    f"({orient}) - the junction was redesigned to {L}bp inside the declared "
+                    f"range ({amin}-{amax}bp). No action needed."
+                )
+                events.record("junction", events.KIND_DETOUR, label,
+                              f"junction length -> {L}bp", f"the arm matched {who} ({worst}bp)")
+            else:
+                verdict = "redesigned (outside the declared range)"
+                why = f"redesigned to {L}bp, outside the declared range {amin}-{amax}bp"
+                plan.warnings.append(
+                    f"{label}: no length in the declared range ({amin}-{amax}bp) kept the arm "
+                    f"from matching {who} over {worst}bp ({orient}), so it was designed at "
+                    f"{L}bp - **outside the range you set** (allowed limits {hlo}-{hhi}bp). "
+                    f"The assembly is expected to work, but the junction length is not the one "
+                    f"you declared; widen the range if you want this inside it."
+                )
+                events.record("junction", events.KIND_LIMIT, label,
+                              f"junction length -> {L}bp (outside {amin}-{amax}bp)",
+                              f"the arm matched {who} ({worst}bp) at every in-range length")
+            plan.arm_hits.append({
+                "a": label, "b": who, "bp": worst, "orient": orient,
+                "verdict": verdict, "detail": why,
+            })
+
+    @staticmethod
+    def _check_body_crosstalk(plan: JunctionPlan) -> None:
+        """비인접 fragment의 **몸통**이 서열을 얼마나 공유하는지 기록한다.
+
+        인접 쌍은 공유하는 것이 설계 의도이므로 제외한다. 몸통끼리 길게 공유하면
+        (실측: 같은 부품을 두 자리에 쓰면 81bp) 세포 안에서는 의도하지 않은 자리끼리
+        재조합할 수 있다.
+
+        ⚠️ **차단하지 않는다**(2026-11-06). 2개를 바꿨다:
+          - 비교 대상이 `fragment.seq`(arm 포함) → **`fragment.body`**. arm이 끼는
+            위험은 `_resolve_arm_crosstalk`가 재설계로 처리하므로, 여기서 또 세면
+            같은 사건이 두 번 보고된다.
+          - yeast 하드 차단 → 기록. 몸통끼리의 공유는 **arm 길이로 고칠 수 없다**
+            (부품을 바꿔야 한다). 고칠 수 없는 것으로 설계를 막는 대신, 원인과 조치를
+            적어 남긴다. Gibson에서는 exonuclease가 말단만 깎으므로 애초에 어닐링
+            자체가 안 된다.
+        """
         frags = plan.fragments
         worst = 0
         checked = 0
         for i in range(len(frags)):
             for j in range(i + 2, len(frags)):
                 checked += 1
-                a, b = str(frags[i].seq), str(frags[j].seq)
-                fwd = longest_common_substring_len(a, b)
-                # 한쪽만 뒤집어 한 번 더 — 둘 다 뒤집으면 정방향 비교와 같아진다.
-                rev = longest_common_substring_len(
-                    a, str(_Seq(b).reverse_complement()))
-                shared = max(fwd, rev)
+                shared, orient = JunctionPlanner._shared_run(frags[i].body, frags[j].body)
                 worst = max(worst, shared)
                 if shared >= JUNCTION_UNIQUE_MAX_BP:
                     plan.crosstalk_pairs.append(
-                        (frags[i].name, frags[j].name, shared,
-                         "reverse-complement" if rev > fwd else "forward"))
+                        (frags[i].name, frags[j].name, shared, orient))
         plan.max_crosstalk = worst
         plan.crosstalk_checked = checked
         for a, b, n, orient in plan.crosstalk_pairs:
             plan.warnings.append(
-                f"Non-adjacent fragments {a} <-> {b} share {n}bp "
-                f"({orient}, threshold {JUNCTION_UNIQUE_MAX_BP}bp) - unintended positions "
-                f"may recombine. Check whether the same part is used in two places."
+                f"Non-adjacent fragments {a} <-> {b} share {n}bp of body sequence "
+                f"({orient}, threshold {JUNCTION_UNIQUE_MAX_BP}bp). The homology arms were "
+                f"kept clear of each other, so the assembly is not blocked - but in vivo "
+                f"these positions can still recombine with each other. Check whether the "
+                f"same part is used in two places."
             )
 
 

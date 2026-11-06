@@ -6,7 +6,7 @@
 
 ### (1) 접합부 교차 검사가 정방향만 봤다
 
-`JunctionPlanner._check_crosstalk`는 비인접 fragment가 서열을 공유하는지 본다
+`JunctionPlanner._check_body_crosstalk`는 비인접 fragment **몸통**이 서열을 공유하는지 본다
 (같은 부품을 두 자리에 쓰면 엉뚱한 자리끼리 재조합한다 — 실측 81bp 공유). 임계
 `JUNCTION_UNIQUE_MAX_BP = 15`, Gibson은 경고 / yeast HR은 하드 차단으로 쓴다.
 
@@ -107,10 +107,15 @@ check(longest_common_substring_len(A_SEQ, B_SEQ) == fwd_only,
 
 
 class _Frag:
-    """`_check_crosstalk`가 보는 최소 인터페이스(name/seq)만 흉내낸다."""
+    """`_check_body_crosstalk`가 보는 최소 인터페이스(name/body)만 흉내낸다.
+
+    2026-11-06에 비교 대상이 `seq`(arm 포함) → **`body`**로 바뀌었다. arm이 끼는
+    위험은 `_resolve_arm_crosstalk`가 재설계로 처리하므로, 여기서 또 세면 같은
+    사건이 두 번 보고된다.
+    """
 
     def __init__(self, name, seq):
-        self.name, self.seq = name, seq
+        self.name, self.seq, self.body = name, seq, seq
 
 
 class _Plan:
@@ -124,7 +129,7 @@ class _Plan:
 # 비인접이 되도록 가운데에 무관한 fragment를 끼운다(인접 쌍은 공유가 설계 의도라 제외된다).
 MID = "GTGTGTGTGTCACACACACAGTGTGTGTGT"
 plan = _Plan([_Frag("fragA", A_SEQ), _Frag("midX", MID), _Frag("fragB", B_SEQ)])
-JunctionPlanner._check_crosstalk(plan)
+JunctionPlanner._check_body_crosstalk(plan)
 check(len(plan.crosstalk_pairs) == 1,
       "[1] 역상보 교차가 잡힌다 (정방향만 보던 구현은 놓쳤다)",
       f"{len(plan.crosstalk_pairs)}쌍 / max {plan.max_crosstalk}bp")
@@ -136,7 +141,7 @@ if plan.crosstalk_pairs:
 
 # 정방향 케이스도 방향이 바르게 찍히는지 (라벨이 항상 "역상보"로 굳지 않게)
 plan2 = _Plan([_Frag("f1", A_SEQ), _Frag("mid", MID), _Frag("f2", A_SEQ)])
-JunctionPlanner._check_crosstalk(plan2)
+JunctionPlanner._check_body_crosstalk(plan2)
 check(plan2.crosstalk_pairs and plan2.crosstalk_pairs[0][3] == "forward",
       "같은 서열 두 벌은 정방향으로 찍힌다",
       str(plan2.crosstalk_pairs[0][2:]) if plan2.crosstalk_pairs else "안 잡힘")
@@ -225,17 +230,32 @@ if cc_path.exists():
     cc = [r for r in cc if not r["kind"].endswith("_summary")]
     check(len(_sum) > 0, "[11] 검사마다 요약 행이 한 줄 있다",
           "; ".join(f"{r['kind']} {r['value']}쌍 → {r['verdict']}" for r in _sum))
-    check(all(str(r["value"]).isdigit() and int(r["value"]) > 0 for r in _sum),
-          "[11] 요약 행에 검사한 쌍 수(분모)가 들어 있다")
+    # 분모가 0일 수 있다 — 접합부가 하나뿐이면 arm끼리 비교할 짝이 없다. 그때는
+    #   "clean"이 아니라 `nothing to compare`로 적혀야 둘이 구분된다(2026-11-06).
+    check(all(str(r["value"]).isdigit() for r in _sum),
+          "[11] 요약 행에 검사한 수(분모)가 들어 있다")
+    check(all(r["verdict"] == "nothing to compare"
+              for r in _sum if int(r["value"]) == 0),
+          "[11] 분모 0은 '깨끗함'과 구분해 적는다",
+          "; ".join(f"{r['kind']} {r['value']} → {r['verdict']}" for r in _sum))
     _blocked = [r for r in cc if r["verdict"] == "BLOCKED"]
     _noted = [r for r in cc if r["verdict"] != "BLOCKED"]
-    print(f"     쌍 {len(cc)}건 — 차단 {len(_blocked)} / 기록 {len(_noted)}")
-    check(len(_noted) > 0, "[7] 기록 등급이 존재한다 (중간 등급을 버리지 않는다)")
-    # [7] 기록 등급은 행을 red로 만들지 않는다
+    print(f"     건 {len(cc)}개 — 차단 {len(_blocked)} / 기록 {len(_noted)}")
+    # 2026-11-06: "중간 등급 dimer를 버리지 않는다"를 보던 자리다. 그 등급 자체가
+    #   없어졌으므로(부품은 하나씩 따로 PCR한다 → 다른 부품의 프라이머와 안 만난다)
+    #   같은 **원칙**을 지금 있는 축으로 본다 — 차단이 아닌 신호도 기록으로 남는가.
+    check(all(r["kind"] in ("overhang_junction", "arm_crosstalk", "body_crosstalk")
+              for r in cc),
+          "[7] 걸린 행의 축은 셋뿐이다 (primer_dimer 축은 제거됐다)",
+          str({r["kind"] for r in cc}) or "0건")
+    check(not [r for r in cc if r["kind"] == "primer_dimer"],
+          "[7] one-pot 프라이머 교차 dimer는 더 이상 검사하지 않는다")
+    # 차단이 아닌 등급은 **행을 red로 만들지 않는다** — 주문 시트의 red는 유저가
+    #   고쳐야 하는 것만이어야 한다(2026-10-20 ΔG 소음의 교훈).
     _x_red = [r for r in rows if "Cross dimer" in (r.get("violations") or "")]
-    check(len(_x_red) <= 2 * len(_blocked),
-          "[7] 차단 등급만 행을 red로 만든다 (기록 등급은 행을 안 건드린다)",
-          f"교차로 red {len(_x_red)}행 ≤ 차단 {len(_blocked)}쌍 × 2")
+    check(not _x_red,
+          "[7] 제거된 축이 주문 시트 red를 만들지 않는다",
+          f"교차 사유로 red {len(_x_red)}행")
 
 # ═════════════════════════════════════════════════════════════════════════
 print("\n[12] 깨끗한 실행 — 걸린 쌍 0이어도 파일이 나온다")

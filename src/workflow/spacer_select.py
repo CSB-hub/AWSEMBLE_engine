@@ -289,12 +289,22 @@ class SpacerSelector:
                         )
                         self.last_selection_warnings.append(w)
                         print(w)
+                        from . import design_events as _ev
+                        _ev.record("spacer", _ev.KIND_LIMIT, f"L={l_id} R={r_id}",
+                                   "picked the least-folded spacers instead of clean ones",
+                                   f"clean candidates L={n_l_clean} R={n_r_clean}"
+                                   f"/{len(pool)}")
                     return l_id, r_id
 
         cap_note = (
             f" **Stopped at the attempt limit of {MAX_INSERTION_DRYRUNS}** (candidates remain)."
             if capped else ""
         )
+        from . import design_events as _ev
+        _ev.record("spacer", _ev.KIND_BLOCKED, vector.name,
+                   "no L/R spacer pair assembled",
+                   f"{tried} attempts, method={method}"
+                   + (f", stopped at the limit of {MAX_INSERTION_DRYRUNS}" if capped else ""))
         raise RuntimeError(
             f"No L/R pair assembled successfully (including the degraded fallback) - "
             f"vector={vector.name}, method={method}, {tried} attempts.{cap_note}\n"

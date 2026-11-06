@@ -397,25 +397,27 @@ class WorkflowBase:
         self._write_design_conditions(design_results)
         return out
 
-    def write_cross_checks_csv(self, out, cross_dimers=None, crosstalk_pairs=None,
-                               scans=None, params=None):
-        """쌍 단위 교차 검사 결과를 `reports/cross_checks.csv`로 쓴다.
+    def write_cross_checks_csv(self, out, overhang_checks=None, arm_hits=None,
+                               crosstalk_pairs=None, scans=None, params=None):
+        """접합부 단위 검사 결과를 `reports/cross_checks.csv`로 쓴다.
 
-        **왜 별 파일인가**: `primers.csv`는 행이 부품 하나다. 그런데 교차 검사는 전부
-        **쌍 단위**라 담을 자리가 없다 — "부품 A의 결합부 ↔ 부품 C의 결합부"는 A의
-        속성도 C의 속성도 아니다. 억지로 한쪽 행에 넣으면 다른 쪽을 보는 사람이 놓친다.
-        그래서 쌍을 1행으로 두는 파일을 따로 두고, `primers.csv`의 양쪽 행에는
+        **왜 별 파일인가**: `primers.csv`는 행이 부품 하나다. 그런데 이 검사들은 전부
+        **접합부/쌍 단위**라 담을 자리가 없다 — "부품 A와 C 사이"는 A의 속성도 C의
+        속성도 아니다. 억지로 한쪽 행에 넣으면 다른 쪽을 보는 사람이 놓친다.
+        그래서 접합부를 1행으로 두는 파일을 따로 두고, `primers.csv`의 양쪽 행에는
         **이 파일을 가리키는 포인터**를 남긴다.
 
         Args:
             out: 출력 경로
-            cross_dimers: `basic.primer_design.check_cross_dimers` 결과
-                (one-pot 프라이머 결합부끼리 — Golden Gate)
+            overhang_checks: Golden Gate 접합부 overhang 판정
+                (`GoldenGateModule.last_overhang_checks` — 제한효소 사이트/codon 교체·차단)
+            arm_hits: homology arm이 엉뚱한 자리에 붙을 뻔한 건과 처리 결과
+                (`JunctionPlan.arm_hits` — 재설계 또는 설계불가)
             crosstalk_pairs: `JunctionPlan.crosstalk_pairs`
-                (비인접 fragment 공유 서열 — Gibson / yeast HR)
-            scans: `[(scope, kind, 검사한 쌍 수), ...]` — **무엇을 몇 쌍 봤는지**.
+                (비인접 fragment **몸통** 공유 — 기록 전용)
+            scans: `[(scope, kind, 검사한 수), ...]` — **무엇을 몇 건 봤는지**.
                 검사마다 요약 행을 한 줄 먼저 쓴다(아래 설명).
-            params: DesignParams — 요약 행에 적을 기준값(ΔG 경계 등). None이면 기본값.
+            params: DesignParams — 요약 행에 적을 기준값. None이면 기본값.
 
         Returns:
             쓴 행 수. 0이면 파일을 만들지 않는다.
@@ -424,56 +426,75 @@ class WorkflowBase:
             **요약 행을 왜 넣는가** (2026-11-06). 처음엔 걸린 쌍이 0이면 파일을 아예
             안 만들었다. 그런데 Galaxy 출력은 파일이 있어야 해서 헤더만 있는 파일이
             나갔고, 유저가 받아 보면 "검사했는데 깨끗한 것"인지 "검사가 안 돈 것"인지
-            구분할 수 없었다. 그래서 `scans`가 있으면 **걸린 쌍이 0이어도** 파일을
-            쓰고, 검사마다 `..._summary` 행으로 "N쌍 중 0쌍"을 적는다. 분모가 있어야
+            구분할 수 없었다. 그래서 `scans`가 있으면 **걸린 게 0이어도** 파일을
+            쓰고, 검사마다 `..._summary` 행으로 "N건 중 0건"을 적는다. 분모가 있어야
             0이 결과로 읽힌다.
+
+            **`primer_dimer` 행은 2026-11-06에 없어졌다.** 부품을 하나씩 따로 PCR하므로
+            다른 부품의 프라이머와 같은 튜브에 있을 일이 없다 — 일어나지 않는 일을
+            검사해 차단하고 있었다. 한 쌍의 fwd↔rev dimer는 `primers.csv`의 violations에
+            그대로 남는다.
         """
         import csv as _csv
         rows = []
-        for h in (cross_dimers or []):
+        for h in (overhang_checks or []):
             rows.append({
-                # 어느 반응(튜브)의 쌍인가. 멀티모듈은 module마다 **다른 튜브**이고
-                #   `part_name`은 module 간에 겹치므로(실측: 2-module에서
-                #   `BBa_J23100_1_designed`가 두 번) scope 없이는 구분이 안 된다.
                 "scope": h.get("scope", ""),
-                "kind": "primer_dimer",
+                "kind": "overhang_junction",
+                "a": h.get("junction", ""), "b": "",
+                "metric": h.get("metric", ""),
+                "value": h.get("value", ""),
+                "verdict": h.get("verdict", ""),
+                "detail": h.get("detail", ""),
+            })
+        for h in (arm_hits or []):
+            rows.append({
+                "scope": h.get("scope", ""),
+                "kind": "arm_crosstalk",
                 "a": h.get("a", ""), "b": h.get("b", ""),
-                "metric": "ΔG(kcal/mol)",
-                "value": round(h["delta_g"], 2) if isinstance(
-                    h.get("delta_g"), (int, float)) else "",
-                "verdict": "BLOCKED" if h.get("blocking") else "noted",
+                "metric": f"shared run (bp, {h.get('orient', '')})",
+                "value": h.get("bp", ""),
+                "verdict": h.get("verdict", ""),
                 "detail": h.get("detail", ""),
             })
         for item in (crosstalk_pairs or []):
             a, b, shared, orient = item[:4]
             rows.append({
                 "scope": item[4] if len(item) > 4 else "",
-                "kind": "junction_crosstalk",
+                "kind": "body_crosstalk",
                 "a": a, "b": b,
                 "metric": f"shared run (bp, {orient})",
                 "value": shared,
-                # yeast는 `YeastHRCloning._check_plan`이 하드 차단으로 올리므로
-                # 여기까지 오면 Gibson 트랙이다(시험관이라 산물을 확인할 수 있다).
-                "verdict": "warning",
-                "detail": "Non-adjacent fragments share sequence - unintended positions "
-                          "may recombine. Check whether the same part is used in two "
-                          "places.",
+                # 차단하지 않는다 — arm 길이로 고칠 수 없는 축이다(부품을 바꿔야 한다).
+                "verdict": "noted",
+                "detail": "Non-adjacent fragment bodies share sequence. The homology arms "
+                          "were kept clear of each other, so the assembly is not blocked - "
+                          "but in vivo these positions can still recombine. Check whether "
+                          "the same part is used in two places.",
             })
-        # ── 요약 행 — 검사마다 한 줄, 걸린 쌍이 0이어도 쓴다 ──────────────────
+        # ── 요약 행 — 검사마다 한 줄, 걸린 게 0이어도 쓴다 ────────────────────
         from params import DEFAULT_PARAMS
         from workflow.junction_plan import JUNCTION_UNIQUE_MAX_BP
         _p = params or DEFAULT_PARAMS
         _why = {
-            "primer_dimer": (
-                f"Every pair of primer annealing regions sharing a tube was compared "
-                f"(noted at dG <= {_p.qc_dimer_dg:g}, blocked at <= "
-                f"{_p.qc_dg_absolute:g} kcal/mol). The 5' tail is excluded because every "
-                f"primer shares it."),
-            "junction_crosstalk": (
-                f"The longest run shared between **non-adjacent** fragments was compared "
-                f"in both forward and reverse-complement orientation (threshold "
-                f"{JUNCTION_UNIQUE_MAX_BP}bp). Adjacent pairs are excluded because sharing "
-                f"is the design intent there."),
+            "overhang_junction": (
+                "Every part-to-part junction was checked for an overhang that completes an "
+                "enzyme recognition sequence with the flanking part ends, and - where the "
+                "junction is translated - for a stop or start codon created by the overhang "
+                "bases. A junction that failed was given a different overhang from the same "
+                "pool in a single pass."),
+            "arm_crosstalk": (
+                f"Each homology arm was compared against the other arms (and, for in vivo "
+                f"assembly, against the other fragment bodies and the backbone) in both "
+                f"forward and reverse-complement orientation, threshold "
+                f"{JUNCTION_UNIQUE_MAX_BP}bp. A junction that matched elsewhere was "
+                f"redesigned at a different length; if no length avoided it, the design "
+                f"stopped."),
+            "body_crosstalk": (
+                f"The longest run shared between **non-adjacent fragment bodies** was "
+                f"compared in both orientations (threshold {JUNCTION_UNIQUE_MAX_BP}bp). "
+                f"Adjacent pairs are excluded because sharing is the design intent there. "
+                f"This is recorded, not blocked - arm length cannot fix it."),
         }
         summary = []
         for scope, kind, n_pairs in (scans or []):
@@ -482,10 +503,15 @@ class WorkflowBase:
             summary.append({
                 "scope": scope,
                 "kind": f"{kind}_summary",
-                "a": "(all pairs)", "b": "",
-                "metric": "pairs checked",
+                "a": "(all junctions)" if kind == "overhang_junction" else "(all pairs)",
+                "b": "",
+                "metric": "junctions checked" if kind == "overhang_junction" else "pairs checked",
                 "value": n_pairs,
-                "verdict": "clean" if n_hit == 0 else f"{n_hit} pairs need review",
+                # 분모가 0이면 "깨끗하다"가 아니라 **비교할 것이 없었다**는 뜻이다
+                # (접합부가 하나뿐이면 arm끼리 비교할 짝이 없다). 둘을 같은 말로
+                # 적으면 분모를 넣은 이유가 사라진다.
+                "verdict": ("nothing to compare" if not n_pairs
+                            else "clean" if n_hit == 0 else f"{n_hit} need review"),
                 "detail": _why.get(kind, ""),
             })
         rows = summary + rows
@@ -498,6 +524,25 @@ class WorkflowBase:
             w.writeheader()
             w.writerows(rows)
         return len(rows)
+
+    def write_design_events_csv(self, out=None) -> int:
+        """`reports/design_events.csv` — 설계 중의 **우회·컷오프 기록**.
+
+        `cross_checks.csv`가 "접합부를 검사한 결과"라면 이 파일은 "엔진이 무엇을
+        우회했는지"다. 효소 전환, overhang 교체, anneal shift, spacer graceful
+        degradation처럼 **결과물만 보면 알 수 없는 판단**이 여기 남는다
+        (`workflow.design_events` 독스트링 참고 — 그 전에는 stdout으로만 나갔다).
+
+        Args:
+            out: 출력 경로. None이면 `reports/design_events.csv`.
+
+        Returns:
+            기록된 사건 수(0이어도 파일은 쓴다).
+        """
+        from . import design_events
+
+        path = out or (self.project_dir / "reports" / design_events.FILENAME)
+        return design_events.write_csv(path)
 
     def _write_design_conditions(self, design_results: List[Dict[str, Any]]) -> Optional[Path]:
         """reports/design_conditions.md — 이 설계에 쓰인 조건을 명시한다.

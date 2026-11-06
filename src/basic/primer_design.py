@@ -261,6 +261,14 @@ def check_cross_dimers(anneals, params=None):
     Note:
         자기 쌍(fwd↔rev)은 **제외한다** — `validate_primer(check_dimer_with=...)`가
         이미 전체 프라이머 기준으로 본다. 여기서 또 보면 같은 쌍이 두 번 보고된다.
+    
+
+    ⚠️ **조립 경로는 이 함수를 부르지 않는다** (2026-11-06). 부품은 **하나씩 따로
+    PCR**하므로 다른 부품의 프라이머와 같은 튜브에 있을 일이 없고, 올리고 부품도
+    쌍별로 따로 어닐링한다 — 즉 "같은 튜브의 프라이머 전수 쌍"이라는 전제가 성립하는
+    반응이 지금 설계에는 없다. 프리미티브는 남겨 둔다(여러 쌍을 한 튜브에 모으는
+    프로토콜이 생기면 그때 이 함수가 맞는 자리다). 한 쌍의 fwd↔rev dimer는
+    `ValidatePrimer.validate_primer(check_dimer_with=...)`가 계속 본다.
     """
     from params import DEFAULT_PARAMS
     from itertools import combinations

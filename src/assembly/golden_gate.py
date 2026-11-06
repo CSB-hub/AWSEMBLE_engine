@@ -211,14 +211,13 @@ class GoldenGateModule(AssemblyBase):
         _ep = get_typeIIS_params(self.enzyme_name)
         self.overhang_len = int(_ep["overhang_len"])   # 효소 파생 (BsaI 4 / SapI 3)
         self.spacer_len = int(_ep["spacer_len"])       # 효소 파생 (BsaI 1 / BbsI 2)
-        # one-pot 교차 dimer 결과(2026-11-05 Y12). `prepare_fragments`가 채우고
-        #   리포트(`reports/cross_checks.csv`)가 읽는다. 쌍 단위 결과라 부품 행에
-        #   담을 자리가 없어서 **설계기가 들고 있다가 넘기는** 방식을 쓴다
-        #   (`last_primer_design`과 같은 패턴 — Y10-b).
-        self.last_cross_dimers = []
-        #: 교차 dimer로 **비교한 쌍 수**. 걸린 쌍이 0일 때 "검사했고 깨끗하다"를
-        #  말하려면 분모가 필요하다(`_DimerScan.pairs_checked`).
-        self.last_cross_dimer_pairs = 0
+        #: 접합부 overhang 판정 결과(제한효소 사이트 / codon). 쌍 단위가 아니라
+        #  **접합부 단위** 결과라 부품 행에 담을 자리가 없어서 설계기가 들고 있다가
+        #  리포트(`reports/cross_checks.csv`)에 넘긴다(`last_primer_design`과 같은 패턴).
+        self.last_overhang_checks = []
+        #: overhang 판정을 **몇 접합부에서** 돌렸는지. 걸린 게 0일 때 "검사했고
+        #  깨끗하다"를 말하려면 분모가 필요하다.
+        self.last_overhang_junctions = 0
 
     # TODO: 현재 기능상으로는 항상 랜덤으로 overhang을 설계해서 나옴.
     # 관계자분 피드백으로는 물리적으로 파츠가 존재할때 overhang 재활용 관점이 굉장히 중요하다고하심.
@@ -248,41 +247,171 @@ class GoldenGateModule(AssemblyBase):
                 return True
         return False
 
-    def _avoid_site_creating_overhangs(self, internal_ohs: List[str],
-                                       parts, enzymes) -> List[str]:
-        """접합부에 사이트를 만드는 overhang을 쓰지 않는 후보로 바꾼다.
+    #: 번역되는 접합부를 가려낼 part_type 조각. DB의 part_type은 테이블명(`cds`, `rbs`)
+    #  이지만 대소문자·접미사가 섞여 들어오므로 **부분 일치**로 본다.
+    _CDS_TYPES = ("cds",)
+    _RBS_TYPES = ("rbs", "utr")
+    _STOP_CODONS = ("TAA", "TAG", "TGA")
+
+    @staticmethod
+    def _part_type(part) -> str:
+        return (part.annotations.get("part_type") or "").lower()
+
+    def _is_cds(self, part) -> bool:
+        t = self._part_type(part)
+        return any(k in t for k in self._CDS_TYPES)
+
+    def _junction_frame_block(self, left, right) -> Optional[str]:
+        """CDS↔CDS 접합부에 **3의 배수가 아닌** overhang이 끼는가.
+
+        overhang은 산물에 그대로 남는 삽입 서열이다(산물 접합부 = 왼쪽 부품 + overhang +
+        오른쪽 부품). 그래서 두 CDS를 융합하는 자리에 4nt overhang이 들어가면
+        **어떤 서열을 골라도** 하류 CDS가 프레임 밖으로 읽힌다 — 교체로 고쳐지는
+        문제가 아니라 길이 문제라서 여기서 끊고 효소를 안내한다.
+
+        Returns:
+            막아야 하면 사유 메시지, 아니면 None.
+        """
+        if not (self._is_cds(left) and self._is_cds(right)):
+            return None
+        if self.overhang_len % 3 == 0:
+            return None
+        return (
+            f"Junction '{left.name}|{right.name}' fuses two CDS parts, but {self.enzyme_name} "
+            f"leaves a {self.overhang_len}nt overhang between them, and {self.overhang_len} is "
+            f"not a multiple of 3 - the downstream CDS is read out of frame whichever overhang "
+            f"sequence is chosen, so this is not an overhang that can be swapped.\n"
+            f"  -> Use an enzyme that leaves a 3nt overhang (SapI), or place a part between them "
+            f"whose length restores the reading frame."
+        )
+
+    def _junction_codon_issue(self, left, oh: str, right) -> Optional[Tuple[str, str]]:
+        """overhang이 끼면서 **새로 생기는** stop/start codon을 찾는다.
+
+        ⚠️ **overhang 염기를 쓰는 codon만** 본다. 접합부 문맥 전체에서 TAA/TGA/TAG를
+        찾으면 거의 항상 걸린다(3프레임을 다 보면 임의 서열에서도 흔하다) — 그건 부품
+        자체의 성질이고 overhang 탓이 아니다. 그래서 codon 구간이 overhang 구간과
+        **겹치는지**를 조건에 넣는다. 번역되지 않는 접합부(promoter↔RBS 등)는 아예
+        보지 않는다 — 그 자리의 stop codon은 아무 의미가 없다.
+
+        Args:
+            left / right: 접합부 양옆 부품(part_type을 읽는다)
+            oh: 그 사이에 들어갈 overhang
+
+        Returns:
+            `(종류, 상세)` 또는 None. 종류는 `"in-frame stop"` / `"new ATG"`.
+        """
+        oh = (oh or "").upper()
+        if not oh:
+            return None
+        l, r = str(left.seq).upper(), str(right.seq).upper()
+
+        if self._is_cds(left) and self._is_cds(right):
+            # 부품이 곧 ORF라고 보고 **왼쪽 CDS의 시작을 프레임 0**으로 둔다.
+            joined = l + oh + r
+            j0, j1 = len(l), len(l) + len(oh)
+            for p in range(j0 - (j0 % 3), min(j1 + 3, len(joined) - 2), 3):
+                if joined[p:p + 3] in self._STOP_CODONS and p < j1 and p + 3 > j0:
+                    return ("in-frame stop",
+                            f"{joined[p:p + 3]} at +{p}bp from the {left.name} start uses "
+                            f"overhang bases")
+            return None
+
+        lt = self._part_type(left)
+        if any(k in lt for k in self._RBS_TYPES) and self._is_cds(right):
+            # RBS→CDS 사이의 새 ATG는 CDS의 제 시작보다 앞에서 번역을 열어버린다.
+            pad = l[-2:]
+            win = pad + oh + r[:2]
+            lo, hi = len(pad), len(pad) + len(oh)
+            for p in range(0, max(0, len(win) - 2)):
+                if win[p:p + 3] == "ATG" and p < hi and p + 3 > lo:
+                    return ("new ATG",
+                            f"ATG spanning the overhang in the {left.name}->{right.name} 5'UTR")
+        return None
+
+    def _refine_overhangs(self, internal_ohs: List[str], parts, enzymes) -> List[str]:
+        """접합부 overhang을 **한 패스로** 다듬는다 — 제한효소 사이트 + codon 동시 판정.
+
+        ⚠️ **두 조건을 따로 돌리면 안 된다.** 사이트를 피해 바꾼 overhang이 codon을
+        만들고, codon을 피해 바꾼 overhang이 사이트를 만들 수 있어 뒤 패스가 앞 패스의
+        결과를 깬다. 후보 필터에 조건을 둘 다 넣고 **한 번만** 고른다.
 
         교체 비용은 거의 없다 — 실측상 최악의 접합부에서도 Awsemble overhang 165개 중
-        159개가 깨끗했고, 나머지 접합부는 전부 165/165였다. 그래도 전부 걸리면
-        **조용히 진행하지 않고** 에러로 알린다(원팟에서는 "덜 나쁜 것"도 결국 잘린다).
+        159개가 사이트 기준으로 깨끗했다. 그래도 전부 걸리면 **조용히 진행하지 않고**
+        에러로 알린다(원팟에서는 "덜 나쁜 것"도 결국 잘린다).
         """
+        from workflow import design_events as events
+
+        self.last_overhang_checks = []
+        self.last_overhang_junctions = len(internal_ohs)
         if not internal_ohs:
             return internal_ohs
+
+        # 교체로 못 고치는 것(프레임시프트)은 후보를 돌려보기 전에 끊는다.
+        for j in range(len(internal_ohs)):
+            msg = self._junction_frame_block(parts[j], parts[j + 1])
+            if msg:
+                label = f"{parts[j].name}|{parts[j + 1].name}"
+                self.last_overhang_checks.append({
+                    "junction": label, "metric": "reading frame",
+                    "value": f"{self.overhang_len}nt overhang",
+                    "verdict": "BLOCKED",
+                    "detail": "CDS-CDS fusion with an overhang length that is not a multiple of 3.",
+                })
+                events.record("part_prep", events.KIND_BLOCKED, label,
+                              "CDS-CDS fusion cannot be framed by an overhang swap",
+                              f"{self.enzyme_name} leaves {self.overhang_len}nt")
+                raise RuntimeError(msg)
+
         pool = [o.upper() for o in getattr(self, "_oh_id_map", {}).keys()]
         used = {o.upper() for o in internal_ohs}
         out = list(internal_ohs)
 
         for j, oh in enumerate(internal_ohs):
-            left = str(parts[j].seq)
-            right = str(parts[j + 1].seq)
-            if not self._junction_creates_site(left, oh, right, enzymes):
+            left, right = parts[j], parts[j + 1]
+            lseq, rseq = str(left.seq), str(right.seq)
+            label = f"{left.name}|{right.name}"
+
+            site = self._junction_creates_site(lseq, oh, rseq, enzymes)
+            codon = self._junction_codon_issue(left, oh, right)
+            if not site and not codon:
                 continue
+            why = "created a restriction site" if site else f"created an {codon[0]}"
+            metric = "restriction site" if site else codon[0]
+            detail = (
+                "The overhang completed an enzyme recognition sequence together with the "
+                "flanking part ends - in one-pot Golden Gate that position would be re-cut "
+                "throughout the reaction."
+                if site else codon[1]
+            )
+
             alt = next(
                 (c for c in pool
                  if c not in used and _rc(c) not in used
-                 and not self._junction_creates_site(left, c, right, enzymes)),
+                 and not self._junction_creates_site(lseq, c, rseq, enzymes)
+                 and self._junction_codon_issue(left, c, right) is None),
                 None,
             )
             if alt is None:
+                self.last_overhang_checks.append({
+                    "junction": label, "metric": metric, "value": oh,
+                    "verdict": "BLOCKED", "detail": detail,
+                })
+                events.record("part_prep", events.KIND_BLOCKED, label,
+                              f"no overhang candidate was clean ({len(pool)} tried)", why)
                 raise RuntimeError(
-                    f"At junction '{parts[j].name}|{parts[j+1].name}' no overhang candidate avoided "
-                    f"creating a restriction site ({len(pool)} candidates tried). "
-                    f"In one-pot Golden Gate that position would be re-cut throughout the "
-                    f"reaction, so this does not proceed. Shift the part ends slightly or "
-                    f"use a different enzyme."
+                    f"At junction '{label}' no overhang candidate avoided {why} "
+                    f"({len(pool)} candidates tried). {detail}\n"
+                    f"  -> Shift the part ends slightly, or use a different enzyme."
                 )
-            print(f"     [swap] junction {parts[j].name}|{parts[j+1].name}: overhang {oh} -> {alt} "
-                  f"(the original one created a restriction site)")
+            print(f"     [swap] junction {label}: overhang {oh} -> {alt} "
+                  f"(the original one {why})")
+            self.last_overhang_checks.append({
+                "junction": label, "metric": metric, "value": f"{oh} -> {alt}",
+                "verdict": "swapped", "detail": detail,
+            })
+            events.record("part_prep", events.KIND_DETOUR, label,
+                          f"overhang {oh} -> {alt}", why)
             used.discard(oh.upper())
             used.add(alt)
             out[j] = alt
@@ -399,6 +528,10 @@ class GoldenGateModule(AssemblyBase):
                 f"     [WARN] the chosen {chosen} recognition site occurs inside parts "
                 f"({', '.join(found[chosen])}) -> switching the whole assembly to {target_enzyme}."
             )
+            from workflow import design_events as _ev
+            _ev.record("part_prep", _ev.KIND_DETOUR, ", ".join(found[chosen]),
+                       f"assembly enzyme {chosen} -> {target_enzyme}",
+                       f"the {chosen} recognition site occurs inside these parts")
 
         # TODO: 위와 동일하게 overhang 재사용 고려
         # 또한 현재 part끼리만 결합하여 module을 제작할 때는 linear만 고려되는데 circular가 어케 나온거지?
@@ -409,7 +542,7 @@ class GoldenGateModule(AssemblyBase):
                 raise ValueError("Circular assembly requires a vector.")
             v_left, v_right = self.extract_vector_overhangs(vector)
             internal_ohs = self._get_high_fidelity_overhang_set(num_parts - 1)
-            internal_ohs = self._avoid_site_creating_overhangs(
+            internal_ohs = self._refine_overhangs(
                 internal_ohs, parts, list(SUPPORTED_ENZYMES))
             # ⚠️ 벡터 쪽 fusion site는 **RC**해서 넣는다.
             #   extract_vector_overhangs는 backbone의 top-strand 말단 서열을 그대로 준다.
@@ -419,7 +552,7 @@ class GoldenGateModule(AssemblyBase):
             all_ohs = [_rc(v_right)] + internal_ohs + [_rc(v_left)]
         else:
             internal_ohs = self._get_high_fidelity_overhang_set(num_parts - 1) if num_parts > 1 else []
-            internal_ohs = self._avoid_site_creating_overhangs(
+            internal_ohs = self._refine_overhangs(
                 internal_ohs, parts, list(SUPPORTED_ENZYMES))
             all_ohs = [""] + internal_ohs + [""]
 
@@ -501,71 +634,15 @@ class GoldenGateModule(AssemblyBase):
                 'structural_notes': design.get('structural_notes', [])
             })
 
-        # ── one-pot 교차 dimer (2026-11-05 Y12) ────────────────────────────
-        # 여기가 올바른 자리인 이유: `prepare_fragments` 한 번이 곧 **한 튜브**다.
-        #   부품 n개의 프라이머 2n개가 같이 들어가므로 전수 쌍의 범위가 정확히 이것이다.
-        #   (부품 하나씩 설계하는 `design_goldengate_primers`는 자기 쌍밖에 모른다)
-        self.last_cross_dimers = self._check_cross_dimers(design_results)
+        # ── one-pot 교차 dimer 검사는 **없다** (2026-11-06 제거) ─────────────
+        # 예전엔 여기서 부품 n개의 프라이머 2n개를 전수 쌍으로 비교해 차단했다. 그런데
+        # 부품은 **하나씩 따로 PCR**한다 — 다른 부품의 프라이머와 같은 튜브에 있을 일이
+        # 없으므로 그 쌍들은 실제로 만나지 않는다. 일어나지 않는 일로 설계를 막고 있었다.
+        # 같은 튜브에서 실제로 의미 있는 두 가지는 이미 다른 곳이 본다:
+        #   - 한 쌍의 fwd↔rev dimer → `ValidatePrimer.validate_primer(check_dimer_with=...)`
+        #   - 라이게이션 원팟의 mis-ligation → overhang 해밍거리 선정(`_get_high_fidelity_overhang_set`)
+        # (올리고 부품도 쌍별로 따로 어닐링하므로 쌍 간 교차는 범위 밖이다.)
         return design_results
-
-    def _check_cross_dimers(self, design_results: List[Dict]) -> List[Dict]:
-        """같은 튜브에 들어가는 프라이머들의 **결합부끼리** dimer를 전수 검사한다.
-
-        걸린 쌍은 ① 연루된 **양쪽 행**의 violations에 넣고(시트만 보고 주문하는 사람이
-        놓치면 안 된다) ② 전체 목록을 돌려준다(`reports/cross_checks.csv`로 나간다).
-
-        왜 결합부만 보는지, 왜 경고가 아니라 차단인지는
-        `basic.primer_design.check_cross_dimers` 독스트링에 있다.
-
-        Args:
-            design_results: `prepare_fragments`가 만든 설계 결과 리스트(제자리 수정됨)
-
-        Returns:
-            `check_cross_dimers`의 결과 리스트
-        """
-        from basic.primer_design import check_cross_dimers
-
-        anneals = []
-        for d in design_results:
-            for side in ("fwd", "rev"):
-                seq = d.get(f"{side}_anneal")
-                if seq:
-                    anneals.append((f"{d['part_name']} {side}", seq))
-        hits = check_cross_dimers(anneals, self.params)
-        self.last_cross_dimer_pairs = getattr(hits, "pairs_checked", 0)
-        if not hits:
-            return []
-
-        # 라벨("<part_name> fwd") → 그 부품의 행
-        #   ⚠️ **차단 등급(blocking)만 행에 적는다.** 중간 등급까지 적으면 기본값에서
-        #     과반이 red가 된다(실측 39행 중 24행 = 62%). 중간 등급은
-        #     `reports/cross_checks.csv`에 남아 필요한 사람이 볼 수 있다.
-        by_name = {d["part_name"]: d for d in design_results}
-        blocking = [h for h in hits if h.get("blocking")]
-        for h in blocking:
-            for lab, other in ((h["a"], h["b"]), (h["b"], h["a"])):
-                row = by_name.get(lab.rsplit(" ", 1)[0])
-                if row is None:
-                    continue
-                row.setdefault("violations", []).append(
-                    f"Cross dimer: the {lab.rsplit(' ', 1)[1]} annealing region binds {other} "
-                    f"strongly (dG {h['delta_g']:.2f} kcal/mol, blocking cutoff "
-                    f"{self.params.qc_dg_absolute:g}) - they share a tube, so these "
-                    f"primers bind each other instead of the template. See "
-                    f"reports/cross_checks.csv for the full pair list."
-                )
-                row["passed"] = False
-                row["tier"] = "red"
-        if blocking:
-            print(f"\n  [BLOCKED] one-pot cross dimer: {len(blocking)} pairs blocked "
-                  f"({len(hits)} recorded) - reports/cross_checks.csv")
-        elif hits:
-            print(f"\n  [NOTE] one-pot cross dimer: {len(hits)} pairs recorded "
-                  f"(none at blocking grade) - reports/cross_checks.csv")
-        for h in hits[:4]:
-            print(f"     {'blocked' if h.get('blocking') else 'noted'} "
-                  f"{h['a']} ↔ {h['b']}: ΔG {h['delta_g']:.2f}")
-        return hits
 
     # TODO: 이 코드가 내가 알기로는 제한효소를 자른뒤에 실제 삽입시켜야하는 서열을 찾는거로 알고 있는데
     # 당연히 overhang 사이에 있는걸 고르도록 해야하지않나? 이게 왜 필요하지?

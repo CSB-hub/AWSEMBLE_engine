@@ -25,7 +25,7 @@ Homology-based overlap을 사용한 DNA 조립 방법입니다.
 작성일: 2025-11-06
 """
 
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 from pydna.dseqrecord import Dseqrecord
 from Bio.Restriction import Restriction
 from .base import AssemblyBase
@@ -70,6 +70,18 @@ class GibsonCloning(AssemblyBase):
     #: — 한 곳만 바꾸면 "접합부는 45bp로 만들었는데 조립은 20bp로 받는" 어긋남이 생긴다.
     #: 둘 다 범위다 — padding을 없앤 뒤로 이 범위가 유일한 탈출구이기 때문이다.
     ARM_PARAMS = ("gibson_overlap", "gibson_overlap_max")
+
+    #: arm이 엉뚱한 자리에 붙어 **유저 범위 안에서는 못 피할 때** 마지막으로 넘어갈 수
+    #: 있는 길이 범위. 유저 범위(soft)와 달리 이건 방법 자체의 한계다 —
+    #: 15bp 미만은 pydna `Assembly`가 겹침으로 인정하지 않고, 60bp를 넘으면 arm이
+    #: 프라이머 5' tail이라 주문 한계(`PRIMER_ORDER_MAX_NT`)에 걸린다.
+    #: 범위를 벗어나 설계하면 **그 사실을 note로 남긴다**(`_resolve_arm_crosstalk`).
+    ARM_HARD_RANGE = (15, 60)
+
+    #: arm을 무엇과 비교할지. in vitro Gibson은 exonuclease가 fragment **말단만**
+    #: 깎으므로 arm이 다른 fragment의 몸통 한복판에 어닐링할 수가 없다 → arm끼리만 본다.
+    #: in vivo(`YeastHRCloning`)는 상동 구간이면 어디든 재조합하므로 몸통까지 본다.
+    CROSSTALK_SCOPE = "arm"
 
     @property
     def arm_range(self) -> Tuple[int, int]:
@@ -266,7 +278,8 @@ class GibsonCloning(AssemblyBase):
     #: `primer_len_max`를 25→35로 올리는 것은 shift가 있으면 +1%p뿐이라 기본값을 바꾸지 않았다.
     MAX_ANNEAL_SHIFT = 16
 
-    def prepare_parts(self, parts: List[Dseqrecord], arm: int = None) -> Tuple[List[Dict], object]:
+    def prepare_parts(self, parts: List[Dseqrecord], arm: int = None,
+                      backbone: Optional[Dseqrecord] = None) -> Tuple[List[Dict], object]:
         """part 리스트 → module 조립용 fragment 설계 (Gibson/HR 공용).
 
         Args:
@@ -274,6 +287,10 @@ class GibsonCloning(AssemblyBase):
                 호출자가 미리 붙여서 넘긴다.
             arm: homology arm 길이(bp). None이면 params의 `ARM_PARAM` 필드
                 (Gibson은 `gibson_overlap`, yeast HR은 `yeast_homology`).
+            backbone: 같은 반응에 들어가는 벡터. `CROSSTALK_SCOPE == "arm+body"`일 때만
+                쓴다 — arm이 백본의 반복 구간에 내려앉는지 보는 용도다. 프라이머가
+                벡터에 붙는 off-target은 **보지 않는다**(부품에 프라이머를 붙이는
+                설계라 벡터는 템플릿이 아니다).
 
         Returns:
             (design_results, plan) — `design_results`는 fragment별 설계 dict 리스트로
@@ -291,8 +308,16 @@ class GibsonCloning(AssemblyBase):
         lo, hi = self.arm_range
         if arm is not None:
             lo = hi = int(arm)
-        plan = planner.plan(parts, arm_min=lo, arm_max=hi)
-        # 방법별 추가 판정(훅). Gibson은 경고까지, yeast HR은 차단한다.
+        extra = []
+        if self.CROSSTALK_SCOPE == "arm+body" and backbone is not None:
+            extra.append((f"{backbone.name} backbone", str(backbone.seq).upper()))
+        plan = planner.plan(
+            parts, arm_min=lo, arm_max=hi,
+            hard_range=self.ARM_HARD_RANGE,
+            crosstalk_scope=self.CROSSTALK_SCOPE,
+            extra_seqs=extra,
+        )
+        # 방법별 추가 판정(훅).
         self._check_plan(plan)
 
         results: List[Dict] = []
@@ -306,12 +331,17 @@ class GibsonCloning(AssemblyBase):
     def _check_plan(self, plan) -> None:
         """접합부 설계 결과에 대한 **방법별 추가 판정** (훅).
 
-        Gibson은 시험관 반응이라 조립 산물을 전기영동·시퀀싱으로 확인한 뒤 다음 단계로
-        가므로, 비인접 fragment 교차 같은 위험은 **경고로 충분하다**
-        (`JunctionPlanner`가 이미 `plan.warnings`에 담아 놓았다).
+        지금은 기본 구현이 아무것도 하지 않는다. 예전에는 여기서 "비인접 fragment가
+        서열을 공유하면" Gibson은 경고, yeast는 차단으로 갈렸는데, 2026-11-06에 판정
+        자체를 `JunctionPlanner`로 옮기면서 그 차이가 사라졌다:
 
-        in vivo 방법(`YeastHRCloning`)은 형질전환 자체가 조립 단계라 확인 시점이 뒤에 있다
-        → 그쪽에서 이 훅을 재정의해 **차단**한다.
+          - **arm이 엉뚱한 자리에 붙는 것**은 `_resolve_arm_crosstalk`가 길이를 다시
+            골라 해결하고, 끝까지 안 되면 양쪽 트랙 모두 설계불가로 끊는다.
+          - **몸통끼리의 공유**는 arm 길이로 고칠 수 없어서(부품을 바꿔야 한다)
+            양쪽 모두 기록만 남긴다.
+
+        비교 범위의 차이(`CROSSTALK_SCOPE`)가 in vitro/in vivo 구분을 가져간다.
+        훅은 방법별 추가 판정이 또 생길 자리로 남겨 둔다.
 
         Args:
             plan: `workflow.junction_plan.JunctionPlan`
@@ -398,7 +428,13 @@ class GibsonCloning(AssemblyBase):
                 break
             attempts.append(f"k={k}: {'; '.join(cand.get('warnings') or ['no reason given'])[:80]}")
 
+        from workflow import design_events as _ev
+
         if basic is None:
+            _ev.record("primer", _ev.KIND_BLOCKED, frag.name,
+                       "primer design failed at every anneal shift",
+                       f"shift 0-{self.MAX_ANNEAL_SHIFT}nt, Tm window "
+                       f"[{self.params.tm_min}, {self.params.tm_max}]")
             raise RuntimeError(
                 f"Primer design failed for fragment '{frag.name}' (template {len(template)}bp) - "
                 f"no candidate even after shifting the anneal start by 0-{self.MAX_ANNEAL_SHIFT}nt.\n"
@@ -406,6 +442,12 @@ class GibsonCloning(AssemblyBase):
                 f"  -> Widen the declared Tm window ([{self.params.tm_min}, {self.params.tm_max}]) "
                 f"or merge this part with a neighbour and order it as an oligo."
             )
+        if shift:
+            # 산물은 그대로다 — 밀린 만큼을 프라이머 5' tail로 되살리기 때문이다.
+            # 그래도 "선언한 조건으로는 설계가 안 됐다"는 사실이므로 남긴다.
+            _ev.record("primer", _ev.KIND_DETOUR, frag.name,
+                       f"anneal start shifted inward by {shift}nt on both ends",
+                       f"no primer passed at shift 0 ({attempts[0] if attempts else 'see log'})")
 
         recovered_left = template[:shift]
         recovered_right = template[len(template) - shift:] if shift else ""

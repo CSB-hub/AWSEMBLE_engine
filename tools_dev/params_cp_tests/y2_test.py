@@ -76,30 +76,35 @@ repeat_parts = [
     part("REP2", "cds", REP),
 ]
 
-print("\n[1] 반복 부품 — yeast는 차단, Gibson은 경고")
+print("\n[1] 반복 부품 — arm이 같아져서 양쪽 다 차단")
+# 2026-11-06 정책 변경: 판정이 `_check_plan`(방법별 등급)에서 `JunctionPlanner`의
+#   **arm 기준 + 재설계 래더**로 옮겨졌다. 같은 부품을 두 자리에 쓰면 두 접합부의
+#   arm이 **동일한 서열**이 되므로 어떤 길이로도 못 피한다 → Gibson도 차단된다.
+#   (Gibson에서 arm은 실제로 어닐링하는 구간이다 — 경고로 둘 수 있는 축이 아니다.)
+#   방법별 차이는 "차단/경고"가 아니라 **비교 범위**로 남았다(`CROSSTALK_SCOPE`).
 gib = AssemblyFactory.create_assembler("gibson", params=prm)
-g_design, g_plan = gib.prepare_parts(repeat_parts)
-print(f"  Gibson: 설계 성공, 교차 최대 {g_plan.max_crosstalk}bp, "
-      f"임계 초과 쌍 {len(g_plan.crosstalk_pairs)}개, 경고 {len(g_plan.warnings)}건")
-check(len(g_design) > 0, "Gibson은 설계를 내놓는다(경고만)")
-check(g_plan.crosstalk_pairs, "Gibson도 교차를 검출해 기록한다")
-
 yeast = AssemblyFactory.create_assembler("yeast_hr", params=prm)
-blocked = False
-msg = ""
-try:
-    yeast.prepare_parts(repeat_parts)
-except RuntimeError as e:
-    blocked, msg = True, str(e)
-print(f"  yeast_hr: {'차단됨' if blocked else '차단 안 됨(문제)'}")
-check(blocked, "yeast_hr은 반복 부품 설계를 차단한다")
+blocks = {}
+for method, asm in (("gibson", gib), ("yeast_hr", yeast)):
+    try:
+        asm.prepare_parts(repeat_parts)
+        blocks[method] = ""
+    except RuntimeError as e:
+        blocks[method] = str(e)
+    print(f"  {method}: {'차단됨' if blocks[method] else '차단 안 됨(문제)'}")
+check(blocks["yeast_hr"], "yeast_hr은 반복 부품 설계를 차단한다")
+check(blocks["gibson"],
+      "Gibson도 차단한다 — arm이 동일하면 어떤 길이로도 못 피한다")
+check(gib.CROSSTALK_SCOPE == "arm" and yeast.CROSSTALK_SCOPE == "arm+body",
+      "방법별 차이는 등급이 아니라 비교 범위로 남았다")
 
 print("\n[2] 차단 메시지 품질")
-if blocked:
+msg = blocks["yeast_hr"]
+if msg:
     print("  " + "\n  ".join(msg.splitlines()[:3]))
-    check("share sequence" in msg, "무엇이 문제인지(서열 공유) 설명")
-    check("the transformation is the assembly" in msg, "왜 차단인지(in vivo) 설명")
-    check("replace one with a different" in msg, "해결 방법(부품 교체)을 알려줌")
+    check("homology arm also matches" in msg, "무엇이 문제인지(arm이 다른 자리에 붙음) 설명")
+    check("no junction length between" in msg, "왜 차단인지(래더를 다 돌았다) 설명")
+    check("Replace the part at this position" in msg, "해결 방법(부품 교체)을 알려줌")
 
 print("\n[3] 반복 부품을 교체하면 통과 (padding 경로는 삭제됨)")
 y_pad = AssemblyFactory.create_assembler("yeast_hr", params=DesignParams())
