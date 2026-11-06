@@ -644,6 +644,19 @@ class WorkflowBuilder:
         n = len(module_groups)
         if n < 2:
             raise ValueError("module_groups needs two or more entries (use build_plasmid for a single module).")
+        # ⚠️ **module 층은 Golden Gate 경로에만 있다.** 이 함수는 인접 module을 라이브러리
+        #   spacer(S0002…)로 잇는데, 그 spacer는 "module을 따로 만들어 one-pot으로 합친다"는
+        #   Golden Gate 패턴의 부품이다. homology 경로(gibson/yeast_hr)는 부품이 한 통에서
+        #   접합부끼리 직접 붙으므로 중간 spacer가 들어갈 자리가 없다.
+        #   2026-11-06까지 이 검사가 없어서 yeast_hr로 5-module을 넘기면 **아무 경고 없이**
+        #   카세트 사이에 S0002/S0005/S0006/S0009가 박힌 construct가 나왔다(실측: 17211bp
+        #   β-carotene). 유저는 요청한 적 없는 서열이고, in vivo HR로는 재현되지도 않는다.
+        if str(module_method).lower() != "golden_gate":
+            raise ValueError(
+                f"module_method='{module_method}' has no module layer — multi-module assembly joins "
+                "modules through shared library spacers, which only the Golden Gate module path designs in. "
+                "Pool every part into a single module and call build_plasmid instead."
+            )
 
         # 1) 양 끝 spacer(vector 접점) + 연결 spacer(인접 공유) 배정
         from params import DEFAULT_PARAMS
