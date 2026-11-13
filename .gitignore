@@ -14,3 +14,8 @@ __pycache__/
 # 테스트 실행 산출물 — 11G짜리다. 원본은 BioCAD/Awsemble/awsemble_dev에 있고
 # backup.sh의 ARTIFACTS로 보관된다.
 tests/
+
+# 연간보고 초안 — 저장소에 올리지 않고 로컬에만 둔다(2026-11-13).
+# 이걸 안 적으면 부모 저장소의 `git status`에 submodule이 늘
+# "수정함: awsemble_engine (추적하지 않은 내용)"으로 뜬다.
+docs/Annual_report/
